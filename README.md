@@ -19,12 +19,53 @@ for how the UI/architecture decisions were made instead.
 
 ```bash
 flutter pub get
-flutter run          # or: flutter build apk / flutter build ios
+flutter run          # or: flutter build apk / flutter build ios / flutter build web
 flutter test         # unit tests for the geo/routing/nav math
 ```
 
 Requires Flutter 3.44+ (this repo was built and verified against it — see
 [Environment](#environment-this-was-built--verified-against)).
+
+## Testing it yourself without Xcode/Android Studio: the web build
+
+There's no Xcode/Android SDK required to try Phantom Eye — every push to
+`main` (and to any `cursor/**` branch) auto-deploys a web build to **GitHub
+Pages** via `.github/workflows/deploy-web.yml`.
+
+**One-time setup (you, not me — I can't toggle repo settings):** in this
+repo's GitHub Settings → Pages, set **Source: GitHub Actions**. After that,
+the workflow runs automatically on every push and the site shows up at
+`https://<your-github-username>.github.io/<repo-name>/`. You can also
+trigger it manually from the Actions tab (`Deploy web build to GitHub
+Pages` → *Run workflow*) if you want a build sooner than the next push.
+
+Locally, the same build is just:
+
+```bash
+flutter build web --release --base-href "/Phantom-Eye/"
+# then serve build/web/ with any static file server, e.g.:
+cd build/web && python3 -m http.server 8080
+```
+
+### Web build caveats (read before assuming something's "broken")
+
+The web build is for **UI/UX QA in a browser**, not a third platform target
+in its own right:
+
+- **Meshtastic (BLE)** only works in browsers with Web Bluetooth support
+  (Chrome/Edge on desktop & Android; **not** Safari/Firefox, and not iOS
+  Safari at all) and needs the browser's own device-picker permission
+  prompt — there's no equivalent of a native pairing flow.
+- **CarPlay / Android Auto** don't exist on the web, obviously — those
+  panels/screens simply aren't reachable from the app's normal navigation.
+- **Location** requires a secure context (HTTPS or localhost) — GitHub
+  Pages serves HTTPS, so this works there and when testing over
+  `http://localhost`, but will silently fail over plain `http://<lan-ip>`.
+- Map tiles/weather/routing/geocoding calls all go through the same public
+  demo APIs as the mobile build (see below) — same rate limits apply.
+- Local storage (tracks/routes/waypoints/settings) uses the browser's
+  `localStorage` via `shared_preferences_web` — clearing site data/using a
+  different browser resets it, same as any other web app.
 
 ## Architecture
 
@@ -151,6 +192,9 @@ Apple-feeling app:
   engine, formatters)
 - `flutter build apk --debug` — builds successfully, including the
   Android Auto Kotlin module
+- `flutter build web --release` — builds successfully; smoke-tested by
+  serving the output and loading it in headless Chrome (mounted correctly,
+  no fatal boot errors visible in `stderr`/DOM)
 - iOS/CarPlay: **not built or run** — no macOS available in this
   environment. Needs verification in Xcode.
 
