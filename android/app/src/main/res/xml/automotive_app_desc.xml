@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Declares this app as a "car app" (Android Auto / Android Automotive OS)
+  offering the navigation template category. Referenced from
+  AndroidManifest.xml via the `com.google.android.gms.car.application`
+  meta-data tag.
+-->
+<automotiveApp>
+    <uses name="template" />
+</automotiveApp>
