@@ -1,5 +1,4 @@
-import 'dart:io';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../models/route_result.dart';
@@ -10,12 +9,16 @@ import '../services/nav_engine.dart';
 /// `ios/Runner/CarPlay/README.md`) for the CarPlay navigation entitlement
 /// this requires and the fact that the native side is an unverified draft
 /// (written without Xcode available to compile it).
+///
+/// Uses [defaultTargetPlatform] rather than `dart:io`'s `Platform` so this
+/// file doesn't break the web build (see `AndroidAutoBridge` for the same
+/// reasoning).
 class CarPlayBridge {
   CarPlayBridge._();
 
   static const _channel = MethodChannel('com.phantomeye.phantom_eye/carplay');
 
-  static bool get _isSupported => Platform.isIOS;
+  static bool get _isSupported => !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
 
   static Future<void> updateProgress({
     required RouteResult route,

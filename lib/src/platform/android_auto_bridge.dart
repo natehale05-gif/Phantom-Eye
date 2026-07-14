@@ -1,5 +1,4 @@
-import 'dart:io';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../models/route_result.dart';
@@ -11,15 +10,16 @@ import '../services/nav_engine.dart';
 /// the Kotlin `CarAppService` renders it on the car screen. No-op on
 /// iOS/other platforms (CarPlay uses a separate native bridge, see
 /// `ios/Runner/CarPlay/`).
+///
+/// Uses [defaultTargetPlatform] rather than `dart:io`'s `Platform` because
+/// this app also ships a web build (for browser-based QA on GitHub Pages —
+/// see `.github/workflows/`), and `dart:io` doesn't compile for web at all.
 class AndroidAutoBridge {
   AndroidAutoBridge._();
 
   static const _channel = MethodChannel('com.phantomeye.phantom_eye/android_auto');
 
-  // This app only ships for iOS/Android (see `flutter create --platforms`
-  // in the project setup), so a direct `Platform.isAndroid` check is safe
-  // without an extra web guard.
-  static bool get _isSupported => Platform.isAndroid;
+  static bool get _isSupported => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   static Future<void> updateProgress({
     required RouteResult route,

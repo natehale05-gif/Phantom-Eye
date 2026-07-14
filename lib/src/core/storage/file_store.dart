@@ -1,33 +1,34 @@
 import 'dart:convert';
-import 'dart:io';
 
-import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-/// JSON-file-per-collection storage for growing datasets: recorded tracks,
-/// saved routes, and waypoints. Good enough for a single-user, offline-first
-/// app; if Phantom Eye grows account sync this is the seam to swap in a
-/// real database (e.g. `drift`/sqlite) or a backend.
+/// JSON-blob-per-collection storage for growing datasets: recorded tracks,
+/// saved routes, and waypoints.
+///
+/// Backed by [SharedPreferences] (not `dart:io` files) so the exact same
+/// code path works on iOS, Android, *and* web (SharedPreferences uses
+/// `localStorage` under the hood on web) — this app ships a web build for
+/// browser-based QA (see `.github/workflows/`), and `dart:io`'s
+/// `File`/`Directory` simply don't exist there.
+///
+/// Good enough for a single-user, offline-first app; if Phantom Eye grows
+/// account sync this is the seam to swap in a real database (e.g.
+/// `drift`/sqlite) or a backend.
 class FileStore {
-  FileStore(this._root);
+  FileStore(this._prefs);
 
-  final Directory _root;
+  final SharedPreferences _prefs;
 
   static Future<FileStore> create() async {
-    final dir = await getApplicationDocumentsDirectory();
-    final root = Directory('${dir.path}/phantom_eye');
-    if (!await root.exists()) {
-      await root.create(recursive: true);
-    }
-    return FileStore(root);
+    return FileStore(await SharedPreferences.getInstance());
   }
 
-  File _fileFor(String collection) => File('${_root.path}/$collection.json');
+  String _keyFor(String collection) => 'collection.$collection';
 
   Future<List<Map<String, dynamic>>> readCollection(String collection) async {
-    final file = _fileFor(collection);
-    if (!await file.exists()) return [];
+    final raw = _prefs.getString(_keyFor(collection));
+    if (raw == null) return [];
     try {
-      final raw = await file.readAsString();
       final decoded = jsonDecode(raw) as List<dynamic>;
       return decoded.cast<Map<String, dynamic>>();
     } catch (_) {
@@ -36,20 +37,7 @@ class FileStore {
   }
 
   Future<void> writeCollection(String collection, List<Map<String, dynamic>> items) async {
-    final file = _fileFor(collection);
-    await file.writeAsString(jsonEncode(items));
-  }
-
-  /// For exporting a single GPX/text file (e.g. track export) to a
-  /// user-visible location under the app's documents directory.
-  Future<File> writeExportFile(String filename, String contents) async {
-    final exportsDir = Directory('${_root.path}/exports');
-    if (!await exportsDir.exists()) {
-      await exportsDir.create(recursive: true);
-    }
-    final file = File('${exportsDir.path}/$filename');
-    await file.writeAsString(contents);
-    return file;
+    await _prefs.setString(_keyFor(collection), jsonEncode(items));
   }
 }
 

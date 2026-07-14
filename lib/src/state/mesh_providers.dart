@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -35,8 +36,12 @@ final meshScanResultsProvider = StreamProvider.autoDispose<List<ScanResult>>((re
   // Android 12+ requires runtime BLUETOOTH_SCAN/CONNECT grants; iOS surfaces
   // its own system prompt automatically the first time Core Bluetooth is
   // touched, but requesting explicitly here doesn't hurt and keeps the
-  // Android/iOS code paths symmetric.
-  await [Permission.bluetoothScan, Permission.bluetoothConnect].request();
+  // Android/iOS code paths symmetric. Web has no equivalent permission API
+  // — Web Bluetooth prompts per-device inside `navigator.bluetooth.requestDevice()`
+  // itself, triggered by flutter_blue_plus_web, so skip this entirely there.
+  if (!kIsWeb) {
+    await [Permission.bluetoothScan, Permission.bluetoothConnect].request();
+  }
 
   final service = ref.watch(meshtasticBleServiceProvider);
   final controller = StreamController<List<ScanResult>>();
