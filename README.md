@@ -21,7 +21,27 @@ view.
 - **Bring your own key** — enter your Cesium ion token once and it's remembered
   locally, or bake it in at build time.
 
-## Getting started
+## Test it live (GitHub Pages)
+
+This repo ships a GitHub Actions workflow that builds the web app and publishes
+it to GitHub Pages, so you can try it in a browser with no local setup.
+
+**One-time setup:** in the repository, open **Settings → Pages** and set
+**Build and deployment → Source** to **GitHub Actions**.
+
+After that, every push to this branch (or a manual run from the **Actions** tab →
+*Deploy web app to GitHub Pages* → *Run workflow*) builds and deploys the site.
+The live URL will be:
+
+```
+https://<your-username>.github.io/Phantom-Eye/
+```
+
+Open it, paste your Cesium ion token, and explore. (If a deploy is blocked
+because it's running from a non-default branch, either allow this branch under
+the repo's **github-pages** environment, or merge the branch into `main`.)
+
+## Getting started (local)
 
 ```bash
 npm install
