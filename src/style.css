@@ -162,6 +162,13 @@ button {
 .categories::-webkit-scrollbar {
   display: none;
 }
+/* While the search dropdown is open it overlays this strip — hide the chips so
+   a tap can't land on a chip that's visually hidden behind the results panel. */
+.top-bar:has(.search-results.is-open) .categories {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
 .chip {
   flex: none;
   display: inline-flex;
