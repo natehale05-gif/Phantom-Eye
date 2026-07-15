@@ -17,7 +17,14 @@ with turn-by-turn guidance played out across the 3D globe.
 - **Turn-by-turn navigation** — search a place, tap the directions arrow, and
   Phantom Eye draws the route on the globe, lists every maneuver with distances,
   and flies a guided fly-through with a live turn banner.
-- **My location** — one tap to geolocate, drop a marker, and fly there.
+- **Live location + follow camera** — an Apple-style blue dot with an accuracy
+  ring, clamped to the photoreal surface. Tap it to enter a chase camera that
+  looks at and follows you as you move.
+- **Waypoints** — drop, name, list, fly to, delete, and route to saved points.
+  Persisted locally for offroad/hunt/backcountry marks.
+- **Track recording** — record a breadcrumb trail on the globe with a live
+  distance + elapsed-time readout.
+- **Coordinate + elevation HUD** — always know exactly where you are.
 - **Search the planet** — Cesium ion geocoding with cinematic fly-to arrivals.
 - **Curated destinations** — hand-framed hero shots of iconic places.
 - **Apple-grade UI** — frosted glass, SF-style typography, spring animations,

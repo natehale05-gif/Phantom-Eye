@@ -3,6 +3,7 @@ import { Globe } from './globe';
 import { PLACES } from './places';
 import { buildShell, buildOnboarding, el, type Shell } from './ui';
 import { Navigator } from './navigation';
+import { Field } from './field';
 import { hasToken, setStoredToken, clearStoredToken, getActiveToken } from './config';
 
 const mount = document.getElementById('app');
@@ -55,8 +56,10 @@ async function boot(root: HTMLElement): Promise<void> {
   }
 
   globe.flyWholePlanet(0);
-  const nav = new Navigator(shell, globe);
-  wireControls(shell, globe, nav);
+  let field: Field;
+  const nav = new Navigator(shell, globe, () => field?.lastLonLat() ?? null);
+  field = new Field(shell, globe, nav);
+  wireControls(shell, globe, nav, field);
 
   try {
     setLoading(shell, true, 'Loading photoreal tiles');
@@ -68,7 +71,7 @@ async function boot(root: HTMLElement): Promise<void> {
   }
 }
 
-function wireControls(shell: Shell, globe: Globe, nav: Navigator): void {
+function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field): void {
   // Destinations
   shell.destinationsRail.addEventListener('click', (e) => {
     const card = (e.target as HTMLElement).closest<HTMLElement>('.destination-card');
@@ -88,12 +91,14 @@ function wireControls(shell: Shell, globe: Globe, nav: Navigator): void {
     collapseSearch(shell);
   });
 
-  // My location
+  // Field tools
   shell.locateButton.addEventListener('click', () => {
-    shell.locateButton.classList.add('is-busy');
-    void nav.locate().finally(() => shell.locateButton.classList.remove('is-busy'));
+    field.recenter();
     collapseSearch(shell);
   });
+  shell.waypointButton.addEventListener('click', () => field.addWaypointHere());
+  shell.waypointsButton.addEventListener('click', () => field.toggleWaypoints());
+  shell.recordButton.addEventListener('click', () => field.toggleRecording());
 
   wireSearch(shell, globe, nav);
 }

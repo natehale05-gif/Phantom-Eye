@@ -29,8 +29,13 @@ export interface Shell {
   destinationsRail: HTMLElement;
   homeButton: HTMLButtonElement;
   locateButton: HTMLButtonElement;
+  waypointButton: HTMLButtonElement;
+  waypointsButton: HTMLButtonElement;
+  recordButton: HTMLButtonElement;
   navPanel: HTMLElement;
+  waypointsPanel: HTMLElement;
   guidance: HTMLElement;
+  hud: HTMLElement;
   loading: HTMLElement;
   loadingLabel: HTMLElement;
 }
@@ -70,24 +75,28 @@ export function buildShell(mount: HTMLElement): Shell {
     destinationsRail,
   ]);
 
-  // --- Side controls (globe reset + my location) ---
-  const homeButton = el('button', {
-    class: 'orb-button glass',
-    type: 'button',
-    title: 'View the whole planet',
-    innerHTML: icons.globe,
-  });
-  const locateButton = el('button', {
-    class: 'orb-button glass',
-    type: 'button',
-    title: 'My location',
-    innerHTML: icons.locate,
-  });
-  const sideControls = el('div', { class: 'side-controls' }, [locateButton, homeButton]);
+  // --- Side controls (field tools + globe reset) ---
+  const orb = (title: string, innerHTML: string) =>
+    el('button', { class: 'orb-button glass', type: 'button', title, innerHTML });
 
-  // --- Navigation bottom sheet + guidance banner (filled dynamically) ---
+  const waypointsButton = orb('Waypoints', icons.list);
+  const waypointButton = orb('Drop a waypoint', icons.pin);
+  const recordButton = orb('Record a track', icons.record);
+  const locateButton = orb('My location', icons.locate);
+  const homeButton = orb('View the whole planet', icons.globe);
+  const sideControls = el('div', { class: 'side-controls' }, [
+    waypointsButton,
+    waypointButton,
+    recordButton,
+    locateButton,
+    homeButton,
+  ]);
+
+  // --- Bottom sheets + guidance banner + HUD (filled dynamically) ---
   const navPanel = el('div', { class: 'nav-panel' });
+  const waypointsPanel = el('div', { class: 'nav-panel' });
   const guidance = el('div', { class: 'guidance' });
+  const hud = el('div', { class: 'hud' });
 
   // --- Loading ---
   const loadingLabel = el('div', { class: 'loading-label', textContent: 'Loading' });
@@ -103,7 +112,9 @@ export function buildShell(mount: HTMLElement): Shell {
     destinationsWrap,
     sideControls,
     navPanel,
+    waypointsPanel,
     guidance,
+    hud,
     creditContainer,
     loading,
   ]);
@@ -120,8 +131,13 @@ export function buildShell(mount: HTMLElement): Shell {
     destinationsRail,
     homeButton,
     locateButton,
+    waypointButton,
+    waypointsButton,
+    recordButton,
     navPanel,
+    waypointsPanel,
     guidance,
+    hud,
     loading,
     loadingLabel,
   };
@@ -194,6 +210,12 @@ const icons = {
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><line x1="3" y1="12" x2="21" y2="12"/></svg>`,
   locate:
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg>`,
+  pin:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 21s-6-5.7-6-10a6 6 0 0 1 12 0c0 4.3-6 10-6 10Z"/><circle cx="12" cy="11" r="2.2"/></svg>`,
+  list:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg>`,
+  record:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"/></svg>`,
   directions:
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 2 22 12 12 22 2 12Z"/><path d="M9 13v-2a2 2 0 0 1 2-2h4"/><path d="M13 6l3 3-3 3"/></svg>`,
   maneuver: {

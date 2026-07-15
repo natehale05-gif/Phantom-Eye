@@ -11,8 +11,27 @@ export interface SearchResult {
   destination: Cesium.Cartesian3 | Cesium.Rectangle;
 }
 
+export interface LocationFix {
+  lon: number;
+  lat: number;
+  accuracy?: number;
+  heading?: number | null;
+}
+
+interface LocationState {
+  lon: number;
+  lat: number;
+  accuracy: number;
+  heading: number | null;
+  height: number;
+  position: Cesium.Cartesian3;
+}
+
 const toRad = Cesium.Math.toRadians;
 const ACCENT = Cesium.Color.fromCssColorString('#0A84FF');
+const WHITE = Cesium.Color.WHITE;
+const WAYPOINT_COLOR = Cesium.Color.fromCssColorString('#FF9F0A');
+const TRACK_COLOR = Cesium.Color.fromCssColorString('#FF375F');
 
 export class Globe {
   readonly viewer: Cesium.Viewer;
@@ -20,7 +39,18 @@ export class Globe {
   private geocoder?: Cesium.IonGeocoderService;
 
   private routeEntities: Cesium.Entity[] = [];
+
+  // Live location + follow camera.
   private locationEntity?: Cesium.Entity;
+  private locationState?: LocationState;
+  private followActive = false;
+  private followExit?: () => void;
+  private onFollowChange?: (on: boolean) => void;
+
+  // Waypoints + track recording.
+  private waypointEntities = new Map<string, Cesium.Entity>();
+  private trackPositions: Cesium.Cartesian3[] = [];
+  private trackEntity?: Cesium.Entity;
 
   // Guided-drive animation state.
   private drivePath: { cart: Cesium.Cartesian3; lonlat: LngLat }[] = [];
@@ -73,7 +103,7 @@ export class Globe {
 
     const ctrl = scene.screenSpaceCameraController;
     ctrl.enableCollisionDetection = true;
-    ctrl.minimumZoomDistance = 5;
+    ctrl.minimumZoomDistance = 3;
     ctrl.inertiaSpin = 0.85;
     ctrl.inertiaTranslate = 0.85;
     ctrl.inertiaZoom = 0.85;
@@ -153,42 +183,261 @@ export class Globe {
 
   /** The [lon, lat] the camera is currently centered on (best-effort). */
   cameraCenterLonLat(): LngLat | null {
-    const ray = this.viewer.camera.getPickRay(
-      new Cesium.Cartesian2(
-        this.viewer.canvas.clientWidth / 2,
-        this.viewer.canvas.clientHeight / 2,
-      ),
+    const center = new Cesium.Cartesian2(
+      this.viewer.canvas.clientWidth / 2,
+      this.viewer.canvas.clientHeight / 2,
     );
-    if (!ray) return null;
+    const ray = this.viewer.camera.getPickRay(center);
     const pos =
-      this.viewer.scene.pickPosition(
-        new Cesium.Cartesian2(
-          this.viewer.canvas.clientWidth / 2,
-          this.viewer.canvas.clientHeight / 2,
-        ),
-      ) ?? this.viewer.scene.globe.pick(ray, this.viewer.scene);
+      this.viewer.scene.pickPosition(center) ??
+      (ray ? this.viewer.scene.globe.pick(ray, this.viewer.scene) : undefined);
     if (!pos) return null;
     const carto = Cesium.Cartographic.fromCartesian(pos);
     return [Cesium.Math.toDegrees(carto.longitude), Cesium.Math.toDegrees(carto.latitude)];
   }
 
-  // ---------- Location & routing overlays ----------
+  // ---------- Surface height sampling ----------
 
-  showLocation(lon: number, lat: number): void {
-    const position = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
-    if (this.locationEntity) this.viewer.entities.remove(this.locationEntity);
+  /**
+   * Height (ellipsoidal, meters) of the photoreal surface at a coordinate, or
+   * null if it can't be resolved. Values are plausibility-checked so a partly
+   * loaded tile can't return an absurd height that buries the dot/camera.
+   */
+  async sampleHeight(lon: number, lat: number): Promise<number | null> {
+    const scene = this.viewer.scene;
+    const base = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
+    const sync = scene.clampToHeight(base);
+    if (sync) {
+      const h = Cesium.Cartographic.fromCartesian(sync).height;
+      if (plausibleHeight(h)) return h;
+    }
+    try {
+      const res = await scene.clampToHeightMostDetailed([Cesium.Cartesian3.fromDegrees(lon, lat, 0)]);
+      if (res[0]) {
+        const h = Cesium.Cartographic.fromCartesian(res[0]).height;
+        if (plausibleHeight(h)) return h;
+      }
+    } catch {
+      /* tiles not ready */
+    }
+    return null;
+  }
+
+  // ---------- Live location (Apple-style blue dot) ----------
+
+  onFollow(cb: (on: boolean) => void): void {
+    this.onFollowChange = cb;
+  }
+
+  isFollowing(): boolean {
+    return this.followActive;
+  }
+
+  hasLocation(): boolean {
+    return !!this.locationState;
+  }
+
+  /** Update (or create) the user location dot, keeping it on the surface. */
+  updateLocation(fix: LocationFix): void {
+    const height = this.locationState?.height ?? 0;
+    const state: LocationState = {
+      lon: fix.lon,
+      lat: fix.lat,
+      accuracy: Math.max(fix.accuracy ?? 8, 4),
+      heading: fix.heading ?? null,
+      height,
+      position: Cesium.Cartesian3.fromDegrees(fix.lon, fix.lat, height),
+    };
+    this.locationState = state;
+
+    if (!this.locationEntity) this.createLocationEntity();
+    else this.locationEntity.show = true;
+
+    if (this.followActive) this.applyFollow(true);
+    this.viewer.scene.requestRender();
+
+    void this.refineLocationHeight(fix.lon, fix.lat);
+  }
+
+  private async refineLocationHeight(lon: number, lat: number): Promise<void> {
+    const h = await this.sampleHeight(lon, lat);
+    if (h === null) return; // keep the provisional height until tiles resolve
+    const s = this.locationState;
+    if (!s || s.lon !== lon || s.lat !== lat) return; // superseded by a newer fix
+    s.height = h;
+    s.position = Cesium.Cartesian3.fromDegrees(lon, lat, h);
+    if (this.followActive) this.applyFollow(true);
+    this.viewer.scene.requestRender();
+  }
+
+  private createLocationEntity(): void {
+    const num = (get: () => number | undefined, fallback: number) =>
+      new Cesium.CallbackProperty(() => get() ?? fallback, false);
+
     this.locationEntity = this.viewer.entities.add({
-      position,
+      position: new Cesium.CallbackProperty(
+        () => this.locationState?.position ?? Cesium.Cartesian3.ZERO,
+        false,
+      ) as unknown as Cesium.PositionProperty,
+      ellipse: {
+        semiMajorAxis: num(() => this.locationState?.accuracy, 8),
+        semiMinorAxis: num(() => this.locationState?.accuracy, 8),
+        height: num(() => this.locationState?.height, 0),
+        material: ACCENT.withAlpha(0.14),
+        outline: true,
+        outlineColor: ACCENT.withAlpha(0.5),
+        outlineWidth: 1,
+      },
       point: {
-        pixelSize: 16,
+        pixelSize: 15,
         color: ACCENT,
-        outlineColor: Cesium.Color.WHITE,
+        outlineColor: WHITE,
         outlineWidth: 3,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
       },
     });
+  }
+
+  clearLocation(): void {
+    this.setFollow(false);
+    if (this.locationEntity) {
+      this.viewer.entities.remove(this.locationEntity);
+      this.locationEntity = undefined;
+    }
+    this.locationState = undefined;
     this.viewer.scene.requestRender();
   }
+
+  /** Enter/leave a chase camera that looks at and follows the location dot. */
+  setFollow(on: boolean): void {
+    if (on && !this.locationState) return;
+    if (on === this.followActive) {
+      if (on) this.applyFollow(false);
+      return;
+    }
+    this.followActive = on;
+    if (on) {
+      this.applyFollow(false);
+      // Any manual camera interaction drops out of follow mode.
+      this.followExit = () => this.setFollow(false);
+      this.viewer.canvas.addEventListener('pointerdown', this.followExit, { once: true });
+    } else if (this.followExit) {
+      this.viewer.canvas.removeEventListener('pointerdown', this.followExit);
+      this.followExit = undefined;
+    }
+    this.onFollowChange?.(this.followActive);
+  }
+
+  private applyFollow(instant: boolean): void {
+    const s = this.locationState;
+    if (!s) return;
+    const hRad = toRad(s.heading ?? 0);
+    const frame = Cesium.Transforms.eastNorthUpToFixedFrame(s.position);
+    const back = 150;
+    const up = 75;
+    const local = new Cesium.Cartesian3(-Math.sin(hRad) * back, -Math.cos(hRad) * back, up);
+    const camPos = Cesium.Matrix4.multiplyByPoint(frame, local, new Cesium.Cartesian3());
+    const orientation = { heading: hRad, pitch: toRad(-28), roll: 0 };
+    if (instant) {
+      this.viewer.camera.setView({ destination: camPos, orientation });
+    } else {
+      this.cancelDrive();
+      this.viewer.camera.flyTo({
+        destination: camPos,
+        orientation,
+        duration: 1.4,
+        easingFunction: Cesium.EasingFunction.QUINTIC_IN_OUT,
+      });
+    }
+  }
+
+  // ---------- Waypoints ----------
+
+  addWaypoint(id: string, lon: number, lat: number, label: string): void {
+    this.removeWaypoint(id);
+    const entity = this.viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(lon, lat, 0),
+      point: {
+        pixelSize: 12,
+        color: WAYPOINT_COLOR,
+        outlineColor: WHITE,
+        outlineWidth: 2.5,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+      label: {
+        text: label,
+        font: '600 13px -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
+        fillColor: WHITE,
+        showBackground: true,
+        backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
+        backgroundPadding: new Cesium.Cartesian2(8, 5),
+        pixelOffset: new Cesium.Cartesian2(0, -22),
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        scaleByDistance: new Cesium.NearFarScalar(300, 1, 12000, 0.55),
+      },
+    });
+    this.waypointEntities.set(id, entity);
+    void this.refineWaypointHeight(id, lon, lat);
+    this.viewer.scene.requestRender();
+  }
+
+  private async refineWaypointHeight(id: string, lon: number, lat: number): Promise<void> {
+    const h = await this.sampleHeight(lon, lat);
+    if (h === null) return;
+    const entity = this.waypointEntities.get(id);
+    if (!entity) return;
+    entity.position = new Cesium.ConstantPositionProperty(
+      Cesium.Cartesian3.fromDegrees(lon, lat, h),
+    );
+    this.viewer.scene.requestRender();
+  }
+
+  removeWaypoint(id: string): void {
+    const entity = this.waypointEntities.get(id);
+    if (entity) {
+      this.viewer.entities.remove(entity);
+      this.waypointEntities.delete(id);
+      this.viewer.scene.requestRender();
+    }
+  }
+
+  clearWaypoints(): void {
+    for (const e of this.waypointEntities.values()) this.viewer.entities.remove(e);
+    this.waypointEntities.clear();
+    this.viewer.scene.requestRender();
+  }
+
+  // ---------- Track recording (breadcrumb trail) ----------
+
+  beginTrack(): void {
+    this.clearTrack();
+    this.trackEntity = this.viewer.entities.add({
+      polyline: {
+        positions: new Cesium.CallbackProperty(() => this.trackPositions, false),
+        width: 7,
+        material: new Cesium.PolylineGlowMaterialProperty({ glowPower: 0.25, color: TRACK_COLOR }),
+        depthFailMaterial: new Cesium.ColorMaterialProperty(TRACK_COLOR.withAlpha(0.5)),
+      },
+    });
+  }
+
+  async pushTrackPoint(lon: number, lat: number): Promise<void> {
+    const h = (await this.sampleHeight(lon, lat)) ?? this.locationState?.height ?? 0;
+    this.trackPositions.push(Cesium.Cartesian3.fromDegrees(lon, lat, h + 2));
+    this.viewer.scene.requestRender();
+  }
+
+  clearTrack(): void {
+    if (this.trackEntity) {
+      this.viewer.entities.remove(this.trackEntity);
+      this.trackEntity = undefined;
+    }
+    this.trackPositions = [];
+    this.viewer.scene.requestRender();
+  }
+
+  // ---------- Routing overlays ----------
 
   clearRoute(): void {
     this.cancelDrive();
@@ -235,7 +484,7 @@ export class Globe {
       point: {
         pixelSize: 14,
         color,
-        outlineColor: Cesium.Color.WHITE,
+        outlineColor: WHITE,
         outlineWidth: 2.5,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
       },
@@ -331,6 +580,11 @@ export class Globe {
 }
 
 // ---------- helpers ----------
+
+/** Earth's real surface sits within this ellipsoidal-height band. */
+function plausibleHeight(h: number): boolean {
+  return Number.isFinite(h) && h > -500 && h < 9000;
+}
 
 function raise(cart: Cesium.Cartesian3, meters: number): Cesium.Cartesian3 {
   const carto = Cesium.Cartographic.fromCartesian(cart);
