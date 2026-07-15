@@ -1,5 +1,6 @@
 import { el } from './ui';
 import { weatherIcon } from './weathericons';
+import { haversine } from './routing';
 import {
   fetchWeather,
   fetchMarine,
@@ -11,11 +12,22 @@ import {
   type MarineData,
 } from './weather';
 
+/** A browsable surf spot near the viewed location. */
+export interface SurfSpot {
+  name: string;
+  lat: number;
+  lon: number;
+}
+
 /** Full-screen Apple-Weather-style page with a Surfline-style surf report. */
 export class WeatherPage {
   private token = 0;
+  private viewing: { lat: number; lon: number } | null = null;
 
-  constructor(private readonly root: HTMLElement) {}
+  constructor(
+    private readonly root: HTMLElement,
+    private readonly findSurfSpots?: (lat: number, lon: number) => Promise<SurfSpot[]>,
+  ) {}
 
   get isOpen(): boolean {
     return this.root.classList.contains('is-open');
@@ -27,7 +39,9 @@ export class WeatherPage {
 
   async open(lat: number, lon: number, name?: string, focus?: 'surf'): Promise<void> {
     const current = ++this.token;
+    this.viewing = { lat, lon };
     this.root.classList.add('is-open');
+    this.root.querySelector('.wx-scroll')?.scrollTo({ top: 0 });
     this.renderSkeleton(name);
 
     let weather: WeatherData;
@@ -49,6 +63,66 @@ export class WeatherPage {
       .catch(() => {
         if (current === this.token) this.renderSurf(weather, null, focus);
       });
+
+    // Nearby surf spots browse list — loads independently of marine data so it
+    // works even from an inland location.
+    void this.loadSpots(lat, lon, current);
+  }
+
+  /** Fetches and renders the browsable "Surf Spots Nearby" list. */
+  private async loadSpots(lat: number, lon: number, current: number): Promise<void> {
+    if (!this.findSurfSpots) return;
+    const host = this.root.querySelector('.wx-spots');
+    if (!host) return;
+    host.replaceChildren(
+      el('div', { class: 'wx-card' }, [
+        cardTitle('Surf Spots Nearby'),
+        el('div', { class: 'wx-surf-loading', textContent: 'Finding surf spots…' }),
+      ]),
+    );
+
+    let spots: SurfSpot[];
+    try {
+      spots = await this.findSurfSpots(lat, lon);
+    } catch {
+      spots = [];
+    }
+    if (current !== this.token) return;
+    if (!host.isConnected) {
+      const fresh = this.root.querySelector('.wx-spots');
+      if (!fresh) return;
+      return this.paintSpots(fresh, spots);
+    }
+    this.paintSpots(host, spots);
+  }
+
+  private paintSpots(host: Element, spots: SurfSpot[]): void {
+    if (!spots.length) {
+      host.replaceChildren(
+        el('div', { class: 'wx-card' }, [
+          cardTitle('Surf Spots Nearby'),
+          el('div', { class: 'wx-surf-empty', textContent: 'No surf spots found around here.' }),
+        ]),
+      );
+      return;
+    }
+
+    const here = this.viewing;
+    const list = el('div', { class: 'wx-spots-list' });
+    for (const s of spots) {
+      const active = !!here && Math.abs(here.lat - s.lat) < 1e-5 && Math.abs(here.lon - s.lon) < 1e-5;
+      const dist = here ? haversine([here.lon, here.lat], [s.lon, s.lat]) : 0;
+      const row = el('button', { class: `wx-spot${active ? ' is-active' : ''}`, type: 'button' }, [
+        el('span', { class: 'wx-spot-name', textContent: s.name }),
+        el('span', { class: 'wx-spot-dist', textContent: here ? fmtMiles(dist) : '' }),
+      ]);
+      row.addEventListener('click', () => {
+        if (active) return;
+        void this.open(s.lat, s.lon, s.name, 'surf');
+      });
+      list.append(row);
+    }
+    host.replaceChildren(el('div', { class: 'wx-card wx-spots-card' }, [cardTitle('Surf Spots Nearby'), list]));
   }
 
   // ---------- Rendering ----------
@@ -104,6 +178,7 @@ export class WeatherPage {
       this.dailyCard(w),
       this.detailsGrid(w),
       el('div', { class: 'wx-surf' }, [el('div', { class: 'wx-surf-loading', textContent: 'Loading surf report…' })]),
+      el('div', { class: 'wx-spots' }),
     ]);
 
     this.root.replaceChildren(scroll);
@@ -273,6 +348,13 @@ function surfStat(value: string, label: string): HTMLElement {
 
 function clock(ms: number): string {
   return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function fmtMiles(meters: number): string {
+  const mi = meters / 1609.34;
+  if (mi < 0.1) return 'here';
+  if (mi < 10) return `${mi.toFixed(1)} mi`;
+  return `${Math.round(mi)} mi`;
 }
 
 function uvLabel(uv: number): string {

@@ -78,7 +78,12 @@ async function boot(root: HTMLElement): Promise<void> {
   if (import.meta.env.DEV) (window as unknown as { __nav: Navigator }).__nav = nav;
   field = new Field(shell, globe, nav);
   field.onLocation((fix) => nav.onLocation(fix));
-  weather = new WeatherPage(shell.weatherPage);
+  weather = new WeatherPage(shell.weatherPage, async (lat, lon) => {
+    const cat = categoryById('surf');
+    if (!cat) return [];
+    const results = await searchNearby(cat, [lon, lat]);
+    return results.map((r) => ({ name: r.name, lat: r.lat, lon: r.lon }));
+  });
   wireControls(shell, globe, nav, field);
   wireWeather(shell, globe, field);
 

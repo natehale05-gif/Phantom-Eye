@@ -1742,6 +1742,53 @@ button {
   padding: 6px 0;
 }
 
+/* Browsable surf spots list */
+.wx-spots-list {
+  display: flex;
+  flex-direction: column;
+}
+.wx-spot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 4px;
+  text-align: left;
+  color: #fff;
+  border-top: 0.5px solid rgba(255, 255, 255, 0.1);
+  transition: background 0.16s var(--ease);
+}
+.wx-spot:first-child {
+  border-top: none;
+}
+.wx-spot:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.wx-spot:active {
+  background: rgba(255, 255, 255, 0.14);
+}
+.wx-spot-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 15.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wx-spot-dist {
+  flex: none;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+  font-variant-numeric: tabular-nums;
+}
+.wx-spot.is-active {
+  color: #00c7be;
+}
+.wx-spot.is-active .wx-spot-dist {
+  color: #00c7be;
+}
+
 /* ---------- Toast ---------- */
 .toast {
   position: absolute;
