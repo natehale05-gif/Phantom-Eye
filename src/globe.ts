@@ -98,6 +98,7 @@ export class Globe {
 
     this.tuneScene();
     this.setupPicking();
+    if (import.meta.env.DEV) (window as unknown as { __Cesium: typeof Cesium }).__Cesium = Cesium;
   }
 
   /** Tapping a dropped pin selects that place (opens its card). */
@@ -268,9 +269,26 @@ export class Globe {
     this.viewer.scene.requestRender();
   }
 
-  /** Fly in to look at a single place. */
+  /**
+   * Fly in and look *at* a place from an oblique angle (like Apple Maps' "look
+   * around"), keeping the pin centered in view rather than hovering above it.
+   */
   focusPlace(place: PlacePin): void {
-    this.flyToLonLat(place.lon, place.lat, 480, 15, -42, 2.4);
+    this.cancelDrive();
+    this.setFollow(false);
+    void this.flyLookAt(place.lon, place.lat);
+  }
+
+  private async flyLookAt(lon: number, lat: number): Promise<void> {
+    const h = (await this.sampleHeight(lon, lat)) ?? 0;
+    const center = Cesium.Cartesian3.fromDegrees(lon, lat, h);
+    // Orbit the camera back from the pin (range) at a natural downward pitch so
+    // the pin stays centered; heading from the south gives a pleasant 3D view.
+    this.viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(center, 45), {
+      duration: 2.2,
+      offset: new Cesium.HeadingPitchRange(toRad(0), toRad(-30), 400),
+    });
+    this.viewer.scene.requestRender();
   }
 
   /** Fit the camera to see all currently dropped pins. */
