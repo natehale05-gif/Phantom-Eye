@@ -26,13 +26,17 @@ export function getFix(): Promise<Fix> {
     }
     navigator.geolocation.getCurrentPosition((p) => resolve(toFix(p)), reject, {
       enableHighAccuracy: true,
-      timeout: 10000,
-      maximumAge: 30000,
+      timeout: 20000,
+      maximumAge: 0, // never accept a stale/cached fix — always resolve fresh GPS
     });
   });
 }
 
-/** Start watching position. Returns a stop function. */
+/**
+ * Start watching position at the highest available accuracy. Returns a stop
+ * function. `maximumAge: 0` forces fresh readings so the fix keeps tightening
+ * as the GPS/Wi-Fi radios settle.
+ */
 export function watchFixes(
   onFix: (fix: Fix) => void,
   onError?: (err: GeolocationPositionError) => void,
@@ -43,8 +47,8 @@ export function watchFixes(
   }
   const id = navigator.geolocation.watchPosition((p) => onFix(toFix(p)), onError, {
     enableHighAccuracy: true,
-    timeout: 15000,
-    maximumAge: 1000,
+    timeout: 20000,
+    maximumAge: 0,
   });
   return () => navigator.geolocation.clearWatch(id);
 }

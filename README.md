@@ -27,7 +27,9 @@ with turn-by-turn guidance played out across the 3D globe.
 - **Coordinate + elevation HUD** — always know exactly where you are.
 - **Opens at your location** — on launch it flies to and follows your GPS
   position (falling back to a hero view if location is unavailable).
-- **Search the planet** — Cesium ion geocoding with cinematic fly-to arrivals.
+- **Search anything** — addresses, cities, and points of interest (restaurants,
+  shops, parks, trailheads) via OpenStreetMap geocoding, biased to your
+  location. Fly to a result or start turn-by-turn to it.
 - **Tools menu** — every function (location, waypoints, recording, whole-planet)
   lives in one Apple-style dropdown beside the search bar.
 - **Apple-grade UI** — frosted glass, SF-style typography, spring animations,
@@ -91,8 +93,9 @@ switch keys without rebuilding.
 
 ## Tech
 
-- [CesiumJS](https://cesium.com/platform/cesiumjs/) + Cesium ion assets
-  (Google Photorealistic 3D Tiles) and ion geocoding
+- [CesiumJS](https://cesium.com/platform/cesiumjs/) + Cesium ion
+  (Google Photorealistic 3D Tiles)
+- [Photon](https://photon.komoot.io/) (OpenStreetMap) for place/POI search
 - [OSRM](https://project-osrm.org/) for driving routes and turn-by-turn steps
 - [Vite](https://vitejs.dev/) + TypeScript
 

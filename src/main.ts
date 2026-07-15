@@ -4,6 +4,7 @@ import { PLACES } from './places';
 import { buildShell, buildOnboarding, el, type Shell } from './ui';
 import { Navigator } from './navigation';
 import { Field } from './field';
+import { searchPlaces } from './geocode';
 import { hasToken, setStoredToken, clearStoredToken, getActiveToken } from './config';
 
 const mount = document.getElementById('app');
@@ -109,15 +110,18 @@ function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field):
     closeMenu();
   });
 
-  wireSearch(shell, globe, nav);
+  wireSearch(shell, globe, nav, field);
 }
 
-function wireSearch(shell: Shell, globe: Globe, nav: Navigator): void {
+const dirIcon =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 2 22 12 12 22 2 12Z"/><path d="M9 13v-2a2 2 0 0 1 2-2h4"/><path d="M13 6l3 3-3 3"/></svg>';
+
+function wireSearch(shell: Shell, globe: Globe, nav: Navigator, field: Field): void {
   let token = 0;
   let debounce: number | undefined;
 
   const render = (
-    items: { displayName: string; fly: () => void; directions: () => void }[],
+    items: { name: string; detail: string; fly: () => void; directions: () => void }[],
   ) => {
     shell.searchResults.replaceChildren();
     if (items.length === 0) {
@@ -125,11 +129,13 @@ function wireSearch(shell: Shell, globe: Globe, nav: Navigator): void {
       return;
     }
     for (const item of items) {
-      const label = el('button', {
-        class: 'search-result-main',
-        type: 'button',
-        textContent: item.displayName,
-      });
+      const lines: (Node | string)[] = [
+        el('span', { class: 'search-result-name', textContent: item.name }),
+      ];
+      if (item.detail) {
+        lines.push(el('span', { class: 'search-result-detail', textContent: item.detail }));
+      }
+      const label = el('button', { class: 'search-result-main', type: 'button' }, lines);
       label.addEventListener('click', () => {
         item.fly();
         collapseSearch(shell);
@@ -139,8 +145,7 @@ function wireSearch(shell: Shell, globe: Globe, nav: Navigator): void {
         class: 'search-result-dir',
         type: 'button',
         title: 'Directions',
-        innerHTML:
-          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 2 22 12 12 22 2 12Z"/><path d="M9 13v-2a2 2 0 0 1 2-2h4"/><path d="M13 6l3 3-3 3"/></svg>',
+        innerHTML: dirIcon,
       });
       dir.addEventListener('click', () => {
         item.directions();
@@ -159,17 +164,15 @@ function wireSearch(shell: Shell, globe: Globe, nav: Navigator): void {
       return;
     }
     try {
-      const results = await globe.search(query);
+      const results = await searchPlaces(query, field.lastLonLat());
       if (current !== token) return;
       render(
-        results.slice(0, 6).map((r) => {
-          const lonlat = Globe.destinationLonLat(r.destination);
-          return {
-            displayName: r.displayName,
-            fly: () => globe.flyToDestination(r.destination),
-            directions: () => void nav.directionsTo(lonlat, r.displayName),
-          };
-        }),
+        results.map((r) => ({
+          name: r.name,
+          detail: r.detail,
+          fly: () => globe.flyToLonLat(r.lon, r.lat, 520, 15, -42, 2.8),
+          directions: () => void nav.directionsTo([r.lon, r.lat], r.name),
+        })),
       );
     } catch {
       if (current === token) render([]);

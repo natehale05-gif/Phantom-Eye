@@ -44,11 +44,6 @@ export function buildShell(mount: HTMLElement): Shell {
   const cesiumContainer = el('div', { id: 'cesiumContainer', class: 'cesium-container' });
   const creditContainer = el('div', { class: 'credit-container' });
 
-  const brand = el('div', { class: 'brand' }, [
-    el('span', { class: 'brand-dot' }),
-    el('span', { class: 'brand-name', textContent: 'Phantom Eye' }),
-  ]);
-
   // --- Search ---
   const searchInput = el('input', {
     class: 'search-input',
@@ -91,7 +86,8 @@ export function buildShell(mount: HTMLElement): Shell {
   });
   const menuWrap = el('div', { class: 'menu-wrap' }, [menuButton, menu]);
 
-  const topBar = el('div', { class: 'top-bar' }, [brand, searchBar, menuWrap]);
+  const searchRow = el('div', { class: 'search-row' }, [searchBar, menuWrap]);
+  const topBar = el('div', { class: 'top-bar' }, [searchRow]);
 
   // --- Bottom sheets + guidance banner + HUD (filled dynamically) ---
   const navPanel = el('div', { class: 'nav-panel' });

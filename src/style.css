@@ -113,8 +113,7 @@ button {
   z-index: 5;
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
+  justify-content: center;
   padding: 0 22px;
   animation: drop-in 0.9s var(--ease) 0.15s both;
 }
@@ -130,41 +129,27 @@ button {
   }
 }
 
-.brand {
+/* Search + tools grouped together, menu directly right of the search bar */
+.search-row {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 48px;
-  padding: 0 6px;
-  user-select: none;
-}
-.brand-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 30% 30%, #6fb8ff, var(--accent));
-  box-shadow: 0 0 14px rgba(10, 132, 255, 0.9);
-}
-.brand-name {
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: 0.2px;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  max-width: 620px;
 }
 
-/* Search */
 .search-bar {
   position: relative;
-  flex: 0 1 460px;
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   gap: 10px;
   height: 48px;
   padding: 0 16px;
   border-radius: 999px;
-  transition: flex-basis 0.5s var(--ease), box-shadow 0.4s var(--ease);
+  transition: box-shadow 0.4s var(--ease);
 }
 .search-bar:focus-within {
-  flex-basis: 520px;
   box-shadow: var(--shadow), inset 0 1px 0 var(--glass-highlight),
     0 0 0 3px rgba(10, 132, 255, 0.35);
 }
@@ -225,10 +210,23 @@ button {
 }
 .search-result-main {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   text-align: left;
-  padding: 11px 14px;
-  font-size: 14px;
+  padding: 10px 14px;
+}
+.search-result-name {
+  font-size: 14.5px;
   color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-result-detail {
+  font-size: 12.5px;
+  color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -863,21 +861,7 @@ button {
 /* ---------- Responsive ---------- */
 @media (max-width: 720px) {
   .top-bar {
-    flex-wrap: wrap;
-  }
-  .brand {
-    order: 1;
-  }
-  .menu-wrap {
-    order: 2;
-    margin-left: auto;
-  }
-  .search-bar {
-    order: 3;
-    flex-basis: 100%;
-  }
-  .search-bar:focus-within {
-    flex-basis: 100%;
+    padding: 0 14px;
   }
   .credit-container {
     max-width: 60vw;
