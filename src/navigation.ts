@@ -44,8 +44,8 @@ export class Navigator {
       this.route = route;
       this.stepIndex = 0;
       this.globe.updateLocation({ lon: origin[0], lat: origin[1] });
-      // The route draws its own start/end pins, so drop the search marker.
-      this.globe.clearPlaceMarker();
+      // The route draws its own start/end pins, so drop the search markers.
+      this.globe.clearPlaces();
       this.globe.showRoute(route.coordinates);
       this.renderPlanning(destName, route);
       this.setState('planning');
@@ -99,32 +99,48 @@ export class Navigator {
   private startGuidance(): void {
     if (!this.route) return;
     this.setState('guiding');
+    this.shell.root.classList.add('is-guiding');
     this.shell.navPanel.classList.remove('is-visible');
     this.renderGuidance();
+    this.renderTripBar();
     this.globe.startDrive(
-      (lonlat) => this.updateGuidance(lonlat),
+      (lonlat, remaining) => this.updateGuidance(lonlat, remaining),
       () => this.arrive(),
     );
   }
 
   private renderGuidance(): void {
-    const exit = el('button', { class: 'guidance-exit', type: 'button', textContent: 'End' });
-    exit.addEventListener('click', () => this.end());
-
     const card = el('div', { class: 'guidance-card glass' }, [
-      el('div', { class: 'guidance-icon' }),
-      el('div', { class: 'guidance-text' }, [
-        el('div', { class: 'guidance-dist' }),
-        el('div', { class: 'guidance-instr' }),
+      el('div', { class: 'guidance-primary' }, [
+        el('div', { class: 'guidance-icon' }),
+        el('div', { class: 'guidance-text' }, [
+          el('div', { class: 'guidance-dist' }),
+          el('div', { class: 'guidance-instr' }),
+        ]),
       ]),
-      exit,
+      el('div', { class: 'guidance-then' }),
     ]);
     this.shell.guidance.replaceChildren(card);
     this.shell.guidance.classList.add('is-visible');
     this.updateGuidanceContent();
   }
 
-  private updateGuidance(current: LngLat): void {
+  private renderTripBar(): void {
+    const end = el('button', { class: 'trip-end', type: 'button', textContent: 'End' });
+    end.addEventListener('click', () => this.end());
+    const inner = el('div', { class: 'trip-inner glass' }, [
+      el('div', { class: 'trip-main' }, [
+        el('div', { class: 'trip-eta' }),
+        el('div', { class: 'trip-sub' }),
+      ]),
+      end,
+    ]);
+    this.shell.tripBar.replaceChildren(inner);
+    this.shell.tripBar.classList.add('is-visible');
+    if (this.route) this.updateTripBar(this.route.distance);
+  }
+
+  private updateGuidance(current: LngLat, remaining: number): void {
     if (!this.route) return;
     while (
       this.stepIndex < this.route.steps.length - 1 &&
@@ -134,6 +150,7 @@ export class Navigator {
     }
     const step = this.route.steps[this.stepIndex];
     this.updateGuidanceContent(haversine(current, step.location));
+    this.updateTripBar(remaining);
   }
 
   private updateGuidanceContent(distanceOverride?: number): void {
@@ -148,13 +165,40 @@ export class Navigator {
         distanceOverride === undefined ? '' : `In ${formatDistance(distanceOverride)}`;
     }
     if (instrEl) instrEl.textContent = step.instruction;
+
+    // "Then …" preview of the following maneuver, Apple-style.
+    const next = this.route.steps[this.stepIndex + 1];
+    const thenEl = this.shell.guidance.querySelector('.guidance-then');
+    if (thenEl) {
+      if (next && next.kind !== 'arrive') {
+        thenEl.innerHTML = `Then ${maneuverIcon(next.kind)}`;
+        (thenEl as HTMLElement).style.display = '';
+      } else {
+        (thenEl as HTMLElement).style.display = 'none';
+      }
+    }
+  }
+
+  private updateTripBar(remainingMeters: number): void {
+    if (!this.route) return;
+    const frac = this.route.distance > 0 ? remainingMeters / this.route.distance : 0;
+    const remainingSeconds = Math.max(0, this.route.duration * frac);
+    const etaEl = this.shell.tripBar.querySelector('.trip-eta');
+    const subEl = this.shell.tripBar.querySelector('.trip-sub');
+    if (etaEl) etaEl.textContent = arrivalClock(remainingSeconds);
+    if (subEl) {
+      subEl.textContent = `${formatDuration(remainingSeconds)} · ${formatDistance(remainingMeters)}`;
+    }
   }
 
   private arrive(): void {
     const instrEl = this.shell.guidance.querySelector('.guidance-instr');
     const distEl = this.shell.guidance.querySelector('.guidance-dist');
+    const thenEl = this.shell.guidance.querySelector('.guidance-then');
     if (instrEl) instrEl.textContent = 'You have arrived';
     if (distEl) distEl.textContent = '';
+    if (thenEl) (thenEl as HTMLElement).style.display = 'none';
+    this.updateTripBar(0);
     window.setTimeout(() => this.end(), 2600);
   }
 
@@ -162,8 +206,10 @@ export class Navigator {
     this.globe.clearRoute();
     this.route = undefined;
     this.stepIndex = 0;
+    this.shell.root.classList.remove('is-guiding');
     this.shell.navPanel.classList.remove('is-visible');
     this.shell.guidance.classList.remove('is-visible');
+    this.shell.tripBar.classList.remove('is-visible');
     this.setState('idle');
   }
 
@@ -183,6 +229,12 @@ export class Navigator {
   private toast(message: string, ms = 2600): void {
     toast(this.shell, message, ms);
   }
+}
+
+/** Clock time of arrival, e.g. "3:45 PM", given seconds remaining. */
+function arrivalClock(remainingSeconds: number): string {
+  const at = new Date(Date.now() + remainingSeconds * 1000);
+  return at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
 /** Small transient message near the bottom of the screen. */

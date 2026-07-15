@@ -1,10 +1,12 @@
 import './style.css';
-import { Globe } from './globe';
+import { Globe, type PlacePin } from './globe';
 import { PLACES } from './places';
 import { buildShell, buildOnboarding, el, type Shell } from './ui';
-import { Navigator } from './navigation';
+import { Navigator, toast } from './navigation';
 import { Field } from './field';
-import { searchPlaces } from './geocode';
+import { searchPlaces, type PlaceResult } from './geocode';
+import { searchNearby } from './nearby';
+import { categoryById } from './categories';
 import { hasToken, setStoredToken, clearStoredToken, getActiveToken } from './config';
 
 const mount = document.getElementById('app');
@@ -109,72 +111,90 @@ function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field):
   });
   shell.menuHome.addEventListener('click', () => {
     if (nav.isActive) nav.end();
+    globe.clearPlaces();
+    hidePlaceCard(shell);
     globe.flyWholePlanet(2.6);
     collapseSearch(shell);
     closeMenu();
   });
 
+  // Selecting a pin on the globe opens its card.
+  globe.onPlaceTap((place) => {
+    globe.focusPlace(place);
+    showPlaceCard(shell, nav, place);
+  });
+
   wireSearch(shell, globe, nav, field);
+  wireCategories(shell, globe, nav, field);
 }
 
 const dirIcon =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 2 22 12 12 22 2 12Z"/><path d="M9 13v-2a2 2 0 0 1 2-2h4"/><path d="M13 6l3 3-3 3"/></svg>';
 
-interface ResultItem {
-  name: string;
-  detail: string;
-  fly: () => void;
-  directions: () => void;
+/** Renders a list of places into the search dropdown, shared by search + categories. */
+function renderResults(
+  shell: Shell,
+  results: PlaceResult[],
+  onSelect: (r: PlaceResult) => void,
+  onDirections: (r: PlaceResult) => void,
+): void {
+  shell.searchResults.replaceChildren();
+  if (results.length === 0) {
+    shell.searchResults.replaceChildren(
+      el('div', { class: 'search-loading', textContent: 'No matches' }),
+    );
+    shell.searchResults.classList.add('is-open');
+    return;
+  }
+  for (const r of results) {
+    const lines: (Node | string)[] = [
+      el('span', { class: 'search-result-name', textContent: r.name }),
+    ];
+    if (r.detail) {
+      lines.push(el('span', { class: 'search-result-detail', textContent: r.detail }));
+    }
+    const label = el('button', { class: 'search-result-main', type: 'button' }, lines);
+    label.addEventListener('click', () => {
+      onSelect(r);
+      collapseSearch(shell);
+      shell.searchInput.blur();
+    });
+    const dir = el('button', {
+      class: 'search-result-dir',
+      type: 'button',
+      title: 'Directions',
+      innerHTML: dirIcon,
+    });
+    dir.addEventListener('click', () => {
+      onDirections(r);
+      collapseSearch(shell);
+      shell.searchInput.blur();
+    });
+    shell.searchResults.append(el('div', { class: 'search-result' }, [label, dir]));
+  }
+  shell.searchResults.classList.add('is-open');
+}
+
+function selectFromSearch(shell: Shell, globe: Globe, nav: Navigator, r: PlaceResult): void {
+  globe.showPlaces([r]);
+  globe.focusPlace(r);
+  showPlaceCard(shell, nav, r);
+}
+
+function startDirections(shell: Shell, nav: Navigator, r: PlaceResult): void {
+  hidePlaceCard(shell);
+  void nav.directionsTo([r.lon, r.lat], r.name);
 }
 
 function wireSearch(shell: Shell, globe: Globe, nav: Navigator, field: Field): void {
   let token = 0;
   let debounce: number | undefined;
-  let lastResults: ResultItem[] = [];
+  let lastResults: PlaceResult[] = [];
 
   const renderLoading = () => {
     shell.searchResults.replaceChildren(
       el('div', { class: 'search-loading', textContent: 'Searching…' }),
     );
-    shell.searchResults.classList.add('is-open');
-  };
-
-  const render = (items: ResultItem[]) => {
-    lastResults = items;
-    shell.searchResults.replaceChildren();
-    if (items.length === 0) {
-      shell.searchResults.replaceChildren(
-        el('div', { class: 'search-loading', textContent: 'No matches' }),
-      );
-      shell.searchResults.classList.add('is-open');
-      return;
-    }
-    for (const item of items) {
-      const lines: (Node | string)[] = [
-        el('span', { class: 'search-result-name', textContent: item.name }),
-      ];
-      if (item.detail) {
-        lines.push(el('span', { class: 'search-result-detail', textContent: item.detail }));
-      }
-      const label = el('button', { class: 'search-result-main', type: 'button' }, lines);
-      label.addEventListener('click', () => {
-        item.fly();
-        collapseSearch(shell);
-        shell.searchInput.blur();
-      });
-      const dir = el('button', {
-        class: 'search-result-dir',
-        type: 'button',
-        title: 'Directions',
-        innerHTML: dirIcon,
-      });
-      dir.addEventListener('click', () => {
-        item.directions();
-        collapseSearch(shell);
-        shell.searchInput.blur();
-      });
-      shell.searchResults.append(el('div', { class: 'search-result' }, [label, dir]));
-    }
     shell.searchResults.classList.add('is-open');
   };
 
@@ -188,16 +208,18 @@ function wireSearch(shell: Shell, globe: Globe, nav: Navigator, field: Field): v
     try {
       const results = await searchPlaces(query, field.lastLonLat());
       if (current !== token) return;
-      render(
-        results.map((r) => ({
-          name: r.name,
-          detail: r.detail,
-          fly: () => globe.showPlace(r.lon, r.lat, r.name),
-          directions: () => void nav.directionsTo([r.lon, r.lat], r.name),
-        })),
+      lastResults = results;
+      renderResults(
+        shell,
+        results,
+        (r) => selectFromSearch(shell, globe, nav, r),
+        (r) => startDirections(shell, nav, r),
       );
     } catch {
-      if (current === token) render([]);
+      if (current === token) {
+        lastResults = [];
+        renderResults(shell, [], () => {}, () => {});
+      }
     }
   };
 
@@ -214,9 +236,8 @@ function wireSearch(shell: Shell, globe: Globe, nav: Navigator, field: Field): v
   });
   shell.searchInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
-      // Enter jumps straight to the top result.
       if (lastResults.length) {
-        lastResults[0].fly();
+        selectFromSearch(shell, globe, nav, lastResults[0]);
         collapseSearch(shell);
         shell.searchInput.blur();
       }
@@ -228,8 +249,88 @@ function wireSearch(shell: Shell, globe: Globe, nav: Navigator, field: Field): v
   });
 
   document.addEventListener('click', (e) => {
-    if (!(e.target as HTMLElement).closest('.search-bar')) collapseSearch(shell);
+    const t = e.target as HTMLElement;
+    if (!t.closest('.search-bar') && !t.closest('.categories')) collapseSearch(shell);
   });
+}
+
+function wireCategories(shell: Shell, globe: Globe, nav: Navigator, field: Field): void {
+  let busy = false;
+  shell.categories.addEventListener('click', async (e) => {
+    const chip = (e.target as HTMLElement).closest('.chip') as HTMLElement | null;
+    if (!chip || busy) return;
+    const cat = categoryById(chip.dataset.cat);
+    if (!cat) return;
+
+    const near = field.lastLonLat() ?? globe.cameraCenterLonLat();
+    if (!near) {
+      toast(shell, 'Move to a place first, then pick a category.');
+      return;
+    }
+
+    for (const c of shell.categories.querySelectorAll('.chip')) c.classList.remove('is-active');
+    chip.classList.add('is-active', 'is-loading');
+    busy = true;
+    try {
+      const results = await searchNearby(cat, near);
+      if (results.length === 0) {
+        toast(shell, `No ${cat.label.toLowerCase()} found nearby.`);
+        return;
+      }
+      globe.showPlaces(results);
+      globe.framePlaces();
+      renderResults(
+        shell,
+        results,
+        (r) => {
+          globe.focusPlace(r);
+          showPlaceCard(shell, nav, r);
+        },
+        (r) => startDirections(shell, nav, r),
+      );
+    } catch {
+      toast(shell, 'Couldn’t load nearby places. Try again.');
+    } finally {
+      chip.classList.remove('is-loading');
+      busy = false;
+    }
+  });
+}
+
+// ---------- Place card (Apple-style) ----------
+
+function showPlaceCard(shell: Shell, nav: Navigator, place: PlacePin): void {
+  const cat = categoryById(place.categoryId);
+  const subtitle = place.detail || cat?.label || 'Dropped pin';
+
+  const close = el('button', { class: 'place-card-close', type: 'button', innerHTML: '&times;' });
+  close.addEventListener('click', () => hidePlaceCard(shell));
+
+  const directions = el('button', { class: 'place-card-dir', type: 'button' }, [
+    el('span', { class: 'place-card-dir-icon', innerHTML: dirIcon }),
+    el('span', { textContent: 'Directions' }),
+  ]);
+  directions.addEventListener('click', () => {
+    hidePlaceCard(shell);
+    void nav.directionsTo([place.lon, place.lat], place.name);
+  });
+
+  const card = el('div', { class: 'place-card glass' }, [
+    el('div', { class: 'place-card-head' }, [
+      el('div', { class: 'place-card-text' }, [
+        el('div', { class: 'place-card-name', textContent: place.name }),
+        el('div', { class: 'place-card-detail', textContent: subtitle }),
+      ]),
+      close,
+    ]),
+    directions,
+  ]);
+  shell.placeCard.replaceChildren(card);
+  shell.placeCard.classList.add('is-visible');
+}
+
+function hidePlaceCard(shell: Shell): void {
+  shell.placeCard.classList.remove('is-visible');
 }
 
 function collapseSearch(shell: Shell): void {

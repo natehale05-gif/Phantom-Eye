@@ -13,6 +13,8 @@ export interface PlaceResult {
   lon: number;
   lat: number;
   category: string;
+  /** Category chip id (food, hotels, …) when this came from a category search. */
+  categoryId?: string;
 }
 
 interface PhotonProps {

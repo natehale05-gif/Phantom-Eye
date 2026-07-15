@@ -2,6 +2,16 @@ import * as Cesium from 'cesium';
 import { getActiveToken } from './config';
 import type { Place } from './places';
 import { bearingDeg, type LngLat } from './geo';
+import { categoryById, DEFAULT_PIN_COLOR } from './categories';
+
+/** A place that can be dropped as a map pin. */
+export interface PlacePin {
+  name: string;
+  detail: string;
+  lon: number;
+  lat: number;
+  categoryId?: string;
+}
 
 /** Cesium ion asset ID for Google Photorealistic 3D Tiles (photoreal buildings + terrain). */
 const GOOGLE_PHOTOREAL_ASSET_ID = 2275207;
@@ -32,7 +42,6 @@ const ACCENT = Cesium.Color.fromCssColorString('#0A84FF'); // "you are here" GPS
 const WHITE = Cesium.Color.WHITE;
 const WAYPOINT_COLOR = Cesium.Color.fromCssColorString('#FF9F0A');
 const TRACK_COLOR = Cesium.Color.fromCssColorString('#FF375F');
-const PLACE_COLOR = Cesium.Color.fromCssColorString('#FF453A'); // searched-place pin (red)
 
 export class Globe {
   readonly viewer: Cesium.Viewer;
@@ -48,8 +57,10 @@ export class Globe {
   private followExit?: () => void;
   private onFollowChange?: (on: boolean) => void;
 
-  // Marker for the most recently searched/selected place.
-  private placeEntity?: Cesium.Entity;
+  // Dropped place pins (search results / nearby categories).
+  private placeMarkers: { entity: Cesium.Entity; place: PlacePin }[] = [];
+  private onPlaceTapCb?: (place: PlacePin) => void;
+  private pickHandler?: Cesium.ScreenSpaceEventHandler;
 
   // Waypoints + track recording.
   private waypointEntities = new Map<string, Cesium.Entity>();
@@ -86,6 +97,21 @@ export class Globe {
     });
 
     this.tuneScene();
+    this.setupPicking();
+  }
+
+  /** Tapping a dropped pin selects that place (opens its card). */
+  private setupPicking(): void {
+    this.pickHandler = new Cesium.ScreenSpaceEventHandler(this.viewer.canvas);
+    this.pickHandler.setInputAction((movement: { position: Cesium.Cartesian2 }) => {
+      const picked = this.viewer.scene.pick(movement.position);
+      const marker = picked?.id && this.placeMarkers.find((m) => m.entity === picked.id);
+      if (marker) this.onPlaceTapCb?.(marker.place);
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+  }
+
+  onPlaceTap(cb: (place: PlacePin) => void): void {
+    this.onPlaceTapCb = cb;
   }
 
   /** Cinematic, premium look: soft atmosphere, lighting, anti-aliasing. */
@@ -199,56 +225,69 @@ export class Globe {
     this.flyToLonLat(lon, lat, height, 20, -35, 3.2);
   }
 
-  // ---------- Searched-place marker ----------
+  // ---------- Place pins (Apple-style teardrop markers) ----------
 
   /**
-   * Drop a distinct red pin on a searched/selected place and fly the camera in
-   * to look at it. The pin is a different color from the blue "you are here"
-   * GPS dot so the two never get confused.
+   * Drop clean teardrop pins for a set of places. Pins are colored by category
+   * (food, hotels, …) and are clearly distinct from the blue "you are here"
+   * GPS dot. Replaces any pins from a previous search.
    */
-  showPlace(lon: number, lat: number, label: string): void {
-    this.clearPlaceMarker();
-    this.placeEntity = this.viewer.entities.add({
-      position: Cesium.Cartesian3.fromDegrees(lon, lat, 0),
-      point: {
-        pixelSize: 15,
-        color: PLACE_COLOR,
-        outlineColor: WHITE,
-        outlineWidth: 3,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-      },
-      label: {
-        text: label,
-        font: '600 13px -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
-        fillColor: WHITE,
-        showBackground: true,
-        backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
-        backgroundPadding: new Cesium.Cartesian2(8, 5),
-        pixelOffset: new Cesium.Cartesian2(0, -24),
-        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        scaleByDistance: new Cesium.NearFarScalar(300, 1, 20000, 0.55),
-      },
-    });
-    void this.refinePlaceHeight(lon, lat);
-    this.flyToLonLat(lon, lat, 520, 15, -42, 2.8);
+  showPlaces(places: PlacePin[]): void {
+    this.clearPlaces();
+    for (const place of places) this.addPin(place);
+    this.viewer.scene.requestRender();
   }
 
-  private async refinePlaceHeight(lon: number, lat: number): Promise<void> {
+  private addPin(place: PlacePin): void {
+    const cat = categoryById(place.categoryId);
+    const image = pinImage(cat?.color ?? DEFAULT_PIN_COLOR, cat?.glyph ?? '');
+    const entity = this.viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(place.lon, place.lat, 0),
+      billboard: {
+        image,
+        width: 34,
+        height: 44,
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        scaleByDistance: new Cesium.NearFarScalar(200, 1, 40000, 0.5),
+      },
+    });
+    this.placeMarkers.push({ entity, place });
+    void this.refinePinHeight(entity, place.lon, place.lat);
+  }
+
+  private async refinePinHeight(entity: Cesium.Entity, lon: number, lat: number): Promise<void> {
     const h = await this.sampleHeight(lon, lat);
-    if (h === null || !this.placeEntity) return;
-    this.placeEntity.position = new Cesium.ConstantPositionProperty(
+    if (h === null) return;
+    entity.position = new Cesium.ConstantPositionProperty(
       Cesium.Cartesian3.fromDegrees(lon, lat, h),
     );
     this.viewer.scene.requestRender();
   }
 
-  clearPlaceMarker(): void {
-    if (this.placeEntity) {
-      this.viewer.entities.remove(this.placeEntity);
-      this.placeEntity = undefined;
-      this.viewer.scene.requestRender();
+  /** Fly in to look at a single place. */
+  focusPlace(place: PlacePin): void {
+    this.flyToLonLat(place.lon, place.lat, 480, 15, -42, 2.4);
+  }
+
+  /** Fit the camera to see all currently dropped pins. */
+  framePlaces(): void {
+    this.cancelDrive();
+    if (this.placeMarkers.length === 0) return;
+    if (this.placeMarkers.length === 1) {
+      this.focusPlace(this.placeMarkers[0].place);
+      return;
     }
+    void this.viewer.flyTo(
+      this.placeMarkers.map((m) => m.entity),
+      { duration: 2, offset: new Cesium.HeadingPitchRange(toRad(0), toRad(-50), 0) },
+    );
+  }
+
+  clearPlaces(): void {
+    for (const m of this.placeMarkers) this.viewer.entities.remove(m.entity);
+    this.placeMarkers = [];
+    this.viewer.scene.requestRender();
   }
 
   /** The [lon, lat] the camera is currently centered on (best-effort). */
@@ -647,8 +686,38 @@ export class Globe {
 
   destroy(): void {
     this.cancelDrive();
+    this.pickHandler?.destroy();
     if (!this.viewer.isDestroyed()) this.viewer.destroy();
   }
+}
+
+// ---------- Pin image generation ----------
+
+const pinCache = new Map<string, string>();
+
+/**
+ * A crisp Apple-style teardrop pin as an SVG data URI: a colored drop with a
+ * white head holding a category glyph (or a clean white dot for plain results).
+ */
+function pinImage(color: string, glyph: string): string {
+  const key = `${color}|${glyph}`;
+  const cached = pinCache.get(key);
+  if (cached) return cached;
+
+  const head = glyph
+    ? `<circle cx="32" cy="30" r="13.5" fill="#fff"/>` +
+      `<g transform="translate(20 18) scale(0.833)" fill="none" stroke="${color}" ` +
+      `stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${glyph}</g>`
+    : `<circle cx="32" cy="30" r="7" fill="#fff"/>`;
+
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="80" viewBox="0 0 64 80">` +
+    `<path d="M32 78 C20 58 8 46 8 30 A24 24 0 1 1 56 30 C56 46 44 58 32 78 Z" ` +
+    `fill="${color}" stroke="#fff" stroke-width="3"/>${head}</svg>`;
+
+  const uri = `data:image/svg+xml,${encodeURIComponent(svg)}`;
+  pinCache.set(key, uri);
+  return uri;
 }
 
 // ---------- helpers ----------

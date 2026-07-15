@@ -1,4 +1,5 @@
 import type { ManeuverKind } from './routing';
+import { CATEGORIES } from './categories';
 
 /** Tiny hyperscript helper. */
 export function el<K extends keyof HTMLElementTagNameMap>(
@@ -31,9 +32,12 @@ export interface Shell {
   menuWaypoints: HTMLButtonElement;
   menuRecord: HTMLButtonElement;
   menuHome: HTMLButtonElement;
+  categories: HTMLElement;
   navPanel: HTMLElement;
   waypointsPanel: HTMLElement;
+  placeCard: HTMLElement;
   guidance: HTMLElement;
+  tripBar: HTMLElement;
   hud: HTMLElement;
   loading: HTMLElement;
   loadingLabel: HTMLElement;
@@ -87,12 +91,35 @@ export function buildShell(mount: HTMLElement): Shell {
   const menuWrap = el('div', { class: 'menu-wrap' }, [menuButton, menu]);
 
   const searchRow = el('div', { class: 'search-row' }, [searchBar, menuWrap]);
-  const topBar = el('div', { class: 'top-bar' }, [searchRow]);
+
+  // --- Category chips (Find nearby: Food, Groceries, Hotels, …) ---
+  const categories = el(
+    'div',
+    { class: 'categories' },
+    CATEGORIES.map((c) =>
+      el('button', { class: 'chip', type: 'button' }, [
+        el('span', {
+          class: 'chip-icon',
+          innerHTML: `<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${c.glyph}</svg>`,
+        }),
+        el('span', { class: 'chip-label', textContent: c.label }),
+      ]),
+    ),
+  );
+  CATEGORIES.forEach((c, i) => {
+    const chip = categories.children[i] as HTMLElement;
+    chip.dataset.cat = c.id;
+    chip.style.setProperty('--chip-color', c.color);
+  });
+
+  const topBar = el('div', { class: 'top-bar' }, [searchRow, categories]);
 
   // --- Bottom sheets + guidance banner + HUD (filled dynamically) ---
   const navPanel = el('div', { class: 'nav-panel' });
   const waypointsPanel = el('div', { class: 'nav-panel' });
+  const placeCard = el('div', { class: 'place-card-wrap' });
   const guidance = el('div', { class: 'guidance' });
+  const tripBar = el('div', { class: 'trip-bar' });
   const hud = el('div', { class: 'hud' });
 
   // --- Loading ---
@@ -108,7 +135,9 @@ export function buildShell(mount: HTMLElement): Shell {
     topBar,
     navPanel,
     waypointsPanel,
+    placeCard,
     guidance,
+    tripBar,
     hud,
     creditContainer,
     loading,
@@ -129,9 +158,12 @@ export function buildShell(mount: HTMLElement): Shell {
     menuWaypoints,
     menuRecord,
     menuHome,
+    categories,
     navPanel,
     waypointsPanel,
+    placeCard,
     guidance,
+    tripBar,
     hud,
     loading,
     loadingLabel,
