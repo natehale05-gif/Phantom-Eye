@@ -4,6 +4,7 @@ import type { Place } from './places';
 import { bearingDeg, type LngLat } from './geo';
 import { categoryById, DEFAULT_PIN_COLOR } from './categories';
 import { StreetLabels } from './streetlabels';
+import { TrailLayers, type TrailLayerId } from './trails';
 
 /** A place that can be dropped as a map pin. */
 export interface PlacePin {
@@ -92,6 +93,7 @@ export class Globe {
   private routeClampToken = 0;
 
   private streetLabels?: StreetLabels;
+  private trails?: TrailLayers;
 
   constructor(container: HTMLElement, creditContainer: HTMLElement) {
     Cesium.Ion.defaultAccessToken = getActiveToken();
@@ -121,12 +123,18 @@ export class Globe {
     this.addBaseMap();
     this.setupPicking();
     this.streetLabels = new StreetLabels(this.viewer);
+    this.trails = new TrailLayers(this.viewer);
     if (import.meta.env.DEV) (window as unknown as { __Cesium: typeof Cesium }).__Cesium = Cesium;
   }
 
   /** Toggle Apple-Maps-style OSM street/place name labels. */
   setStreetLabels(on: boolean): void {
     this.streetLabels?.setEnabled(on);
+  }
+
+  /** Toggle a trail overlay (offroad / hiking / mtb), coloured by difficulty. */
+  setTrailLayer(id: TrailLayerId, on: boolean): void {
+    this.trails?.setEnabled(id, on);
   }
 
   /**

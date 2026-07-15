@@ -466,6 +466,52 @@ button {
 .menu-item.is-busy .menu-item-icon svg {
   animation: spin 0.9s linear infinite;
 }
+.menu-sep {
+  height: 1px;
+  margin: 6px 10px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* --- Trail difficulty legend --- */
+.trail-legend {
+  position: absolute;
+  left: 14px;
+  bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  z-index: 6;
+  padding: 10px 12px;
+  border-radius: 14px;
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+}
+.trail-legend.is-visible {
+  display: flex;
+  animation: fade-in 0.2s ease both;
+}
+.legend-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  opacity: 0.7;
+  margin-bottom: 2px;
+}
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.legend-swatch {
+  width: 16px;
+  height: 4px;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+.legend-label {
+  font-size: 12px;
+  font-weight: 500;
+}
 
 @keyframes fade-in {
   from {

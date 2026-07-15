@@ -162,6 +162,30 @@ function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field):
     closeMenu();
   });
 
+  // Trail overlays (offroad / hiking / mtb), coloured by difficulty. Off by
+  // default (they stream OSM data); each preference is persisted.
+  const trailItems = { offroad: shell.menuOffroad, hiking: shell.menuHiking, mtb: shell.menuMtb };
+  const trailLabel = { offroad: 'Offroad trails', hiking: 'Hiking trails', mtb: 'MTB trails' };
+  const updateLegend = () => {
+    const anyOn = Object.values(trailItems).some((it) => it.classList.contains('is-active'));
+    shell.trailLegend.classList.toggle('is-visible', anyOn);
+  };
+  const applyTrail = (id: 'offroad' | 'hiking' | 'mtb', on: boolean) => {
+    globe.setTrailLayer(id, on);
+    trailItems[id].classList.toggle('is-active', on);
+    updateLegend();
+  };
+  (['offroad', 'hiking', 'mtb'] as const).forEach((id) => {
+    if (localStorage.getItem(`nomos:trail:${id}`) === 'on') applyTrail(id, true);
+    trailItems[id].addEventListener('click', () => {
+      const next = !trailItems[id].classList.contains('is-active');
+      localStorage.setItem(`nomos:trail:${id}`, next ? 'on' : 'off');
+      applyTrail(id, next);
+      toast(shell, `${trailLabel[id]} ${next ? 'on' : 'off'}`);
+      closeMenu();
+    });
+  });
+
   // Download the current area for offline use.
   shell.menuDownload.addEventListener('click', () => {
     closeMenu();

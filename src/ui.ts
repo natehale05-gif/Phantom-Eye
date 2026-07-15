@@ -32,9 +32,13 @@ export interface Shell {
   menuLocate: HTMLButtonElement;
   menuWaypoints: HTMLButtonElement;
   menuRecord: HTMLButtonElement;
+  menuOffroad: HTMLButtonElement;
+  menuHiking: HTMLButtonElement;
+  menuMtb: HTMLButtonElement;
   menuLabels: HTMLButtonElement;
   menuDownload: HTMLButtonElement;
   menuHome: HTMLButtonElement;
+  trailLegend: HTMLElement;
   categories: HTMLElement;
   navPanel: HTMLElement;
   waypointsPanel: HTMLElement;
@@ -79,6 +83,9 @@ export function buildShell(mount: HTMLElement): Shell {
   const menuLocate = item(icons.locate, 'My Location');
   const menuWaypoints = item(icons.list, 'Waypoints');
   const menuRecord = item(icons.record, 'Record Track');
+  const menuOffroad = item(icons.offroad, 'Offroad');
+  const menuHiking = item(icons.hiking, 'Hiking');
+  const menuMtb = item(icons.mtb, 'MTB');
   const menuLabels = item(icons.labels, 'Street Names');
   const menuDownload = item(icons.download, 'Download Area');
   const menuHome = item(icons.globe, 'Whole Planet');
@@ -86,6 +93,11 @@ export function buildShell(mount: HTMLElement): Shell {
     menuLocate,
     menuWaypoints,
     menuRecord,
+    el('div', { class: 'menu-sep' }),
+    menuOffroad,
+    menuHiking,
+    menuMtb,
+    el('div', { class: 'menu-sep' }),
     menuLabels,
     menuDownload,
     menuHome,
@@ -148,6 +160,23 @@ export function buildShell(mount: HTMLElement): Shell {
   const ctrlCompass = ctrlBtn('ctrl-compass', 'Face north', icons.compass);
   const controls = el('div', { class: 'controls' }, [ctrlCompass]);
 
+  // --- Trail difficulty legend (shown when a trail layer is on) ---
+  const legendRow = (color: string, label: string) => {
+    const swatch = el('span', { class: 'legend-swatch' });
+    swatch.setAttribute('style', `background:${color}`);
+    return el('div', { class: 'legend-row' }, [
+      swatch,
+      el('span', { class: 'legend-label', textContent: label }),
+    ]);
+  };
+  const trailLegend = el('div', { class: 'trail-legend glass' }, [
+    el('div', { class: 'legend-title', textContent: 'Trail difficulty' }),
+    legendRow('#34C759', 'Easy'),
+    legendRow('#0A84FF', 'Intermediate'),
+    legendRow('#111111', 'Advanced'),
+    legendRow('#FF3B30', 'Expert'),
+  ]);
+
   // --- Loading ---
   const loadingLabel = el('div', { class: 'loading-label', textContent: 'Loading' });
   const loading = el('div', { class: 'loading' }, [
@@ -167,6 +196,7 @@ export function buildShell(mount: HTMLElement): Shell {
     tripBar,
     hud,
     controls,
+    trailLegend,
     creditContainer,
     waypointEditor,
     loading,
@@ -187,9 +217,13 @@ export function buildShell(mount: HTMLElement): Shell {
     menuLocate,
     menuWaypoints,
     menuRecord,
+    menuOffroad,
+    menuHiking,
+    menuMtb,
     menuLabels,
     menuDownload,
     menuHome,
+    trailLegend,
     categories,
     navPanel,
     waypointsPanel,
@@ -293,6 +327,12 @@ const icons = {
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5h16v2"/><path d="M9 5v14"/><path d="M7 19h4"/><path d="M15 10h5"/><path d="M17 10v9"/><path d="M15.5 19h3"/></svg>`,
   download:
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11"/><path d="M8 11l4 4 4-4"/><path d="M5 20h14"/></svg>`,
+  offroad:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13l1.8-4.2A2 2 0 0 1 6.6 7.5H14l3.2 3H20a1 1 0 0 1 1 1V15"/><path d="M2 15h2.2"/><path d="M19.8 15H22"/><circle cx="8" cy="16.5" r="2.2"/><circle cx="17" cy="16.5" r="2.2"/><path d="M10.2 16.5h4.6"/></svg>`,
+  hiking:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="4.5" r="1.7"/><path d="M12.5 8l-1.5 4 3 2 1.2 5.5"/><path d="M11 12l-3 1.2L6.5 19"/><path d="M14 9l2.5 1.8 2.8-.8"/><path d="M18 20v-6"/></svg>`,
+  mtb:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="16.5" r="3.2"/><circle cx="18" cy="16.5" r="3.2"/><path d="M6 16.5l4.5-7.5H15"/><path d="M10.5 9l3 7.5"/><path d="M13 6h3"/></svg>`,
   maneuver: {
     depart: arrow('<circle cx="12" cy="12" r="4"/>'),
     straight: arrow('<line x1="12" y1="20" x2="12" y2="5"/><path d="M6 11l6-6 6 6"/>'),
