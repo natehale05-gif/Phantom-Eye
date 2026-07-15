@@ -8,7 +8,7 @@ import { searchPlaces, type PlaceResult } from './geocode';
 import { searchNearby, fetchPlaceDetails } from './nearby';
 import { formatDistance, haversine } from './routing';
 import { parseOpeningHours } from './hours';
-import { categoryById, DEFAULT_PIN_COLOR } from './categories';
+import { categoryById, matchCategory, DEFAULT_PIN_COLOR, type Category } from './categories';
 import { WeatherPage } from './weatherpage';
 import { fetchCurrentBrief, wmo } from './weather';
 import { weatherIcon } from './weathericons';
@@ -328,6 +328,29 @@ function wireSearch(shell: Shell, globe: Globe, nav: Navigator, field: Field): v
       collapseSearch(shell);
       return;
     }
+
+    // If the query reads like a category ("food", "dinner", "coffee", "gas"),
+    // show nearby category results with pins — just like tapping the chip.
+    const cat = matchCategory(query);
+    const near = field.lastLonLat() ?? globe.cameraCenterLonLat();
+    if (cat && near) {
+      try {
+        const results = await showCategoryResults(shell, globe, nav, field, cat, near);
+        if (current !== token) return;
+        if (results.length) {
+          lastResults = results;
+          const chip = shell.categories.querySelector<HTMLElement>(`.chip[data-cat="${cat.id}"]`);
+          for (const c of shell.categories.querySelectorAll('.chip')) c.classList.remove('is-active');
+          chip?.classList.add('is-active');
+          return;
+        }
+        // No category hits nearby — fall through to a normal place search.
+      } catch {
+        /* fall through to geocoding */
+      }
+      if (current !== token) return;
+    }
+
     try {
       const results = await searchPlaces(query, field.lastLonLat());
       if (current !== token) return;
@@ -460,6 +483,35 @@ function rememberRecent(r: PlaceResult): void {
   }
 }
 
+/**
+ * Run a category "find nearby" search (Food, Coffee, …), drop pins, frame them,
+ * and list the results. Shared by the category chips and free-text search so
+ * typing "dinner" behaves just like tapping the Food chip. Returns the results.
+ */
+async function showCategoryResults(
+  shell: Shell,
+  globe: Globe,
+  nav: Navigator,
+  field: Field,
+  cat: Category,
+  near: [number, number],
+): Promise<PlaceResult[]> {
+  const results = await searchNearby(cat, near);
+  if (results.length === 0) return [];
+  globe.showPlaces(results);
+  globe.framePlaces();
+  renderResults(
+    shell,
+    results,
+    (r) => {
+      globe.focusPlace(r);
+      showPlaceCard(shell, nav, field, r);
+    },
+    (r) => startDirections(shell, nav, r),
+  );
+  return results;
+}
+
 function wireCategories(shell: Shell, globe: Globe, nav: Navigator, field: Field): void {
   let busy = false;
   shell.categories.addEventListener('click', async (e) => {
@@ -478,22 +530,8 @@ function wireCategories(shell: Shell, globe: Globe, nav: Navigator, field: Field
     chip.classList.add('is-active', 'is-loading');
     busy = true;
     try {
-      const results = await searchNearby(cat, near);
-      if (results.length === 0) {
-        toast(shell, `No ${cat.label.toLowerCase()} found nearby.`);
-        return;
-      }
-      globe.showPlaces(results);
-      globe.framePlaces();
-      renderResults(
-        shell,
-        results,
-        (r) => {
-          globe.focusPlace(r);
-          showPlaceCard(shell, nav, field, r);
-        },
-        (r) => startDirections(shell, nav, r),
-      );
+      const results = await showCategoryResults(shell, globe, nav, field, cat, near);
+      if (results.length === 0) toast(shell, `No ${cat.label.toLowerCase()} found nearby.`);
     } catch {
       toast(shell, 'Couldn’t load nearby places. Try again.');
     } finally {

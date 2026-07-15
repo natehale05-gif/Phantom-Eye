@@ -12,6 +12,11 @@ export interface Category {
   glyph: string;
   /** OpenStreetMap [key, value] tag pairs to search for. */
   osm: [string, string][];
+  /**
+   * Words a user might type to mean this category — so searching "dinner",
+   * "lunch", or "coffee" pulls up the matching nearby places, Apple-Maps-style.
+   */
+  keywords: string[];
 }
 
 // A neutral pin for plain search results (Apple's red "dropped" pin).
@@ -28,6 +33,32 @@ export const CATEGORIES: Category[] = [
       ['amenity', 'restaurant'],
       ['amenity', 'fast_food'],
     ],
+    keywords: [
+      'food',
+      'restaurant',
+      'restaurants',
+      'dinner',
+      'lunch',
+      'brunch',
+      'dining',
+      'eat',
+      'meal',
+      'takeout',
+      'diner',
+      'pizza',
+      'burger',
+      'burgers',
+      'sushi',
+      'tacos',
+      'mexican',
+      'italian',
+      'chinese',
+      'thai',
+      'indian',
+      'sandwich',
+      'bbq',
+      'steakhouse',
+    ],
   },
   {
     id: 'coffee',
@@ -36,6 +67,7 @@ export const CATEGORIES: Category[] = [
     glyph:
       '<path d="M5 8h11v4a5 5 0 0 1-5 5h-1a5 5 0 0 1-5-5V8Z"/><path d="M16 9h2.5a2.5 2.5 0 0 1 0 5H16"/><path d="M8 3v2"/><path d="M12 3v2"/>',
     osm: [['amenity', 'cafe']],
+    keywords: ['coffee', 'cafe', 'café', 'espresso', 'latte', 'cappuccino', 'breakfast'],
   },
   {
     id: 'groceries',
@@ -48,6 +80,7 @@ export const CATEGORIES: Category[] = [
       ['shop', 'convenience'],
       ['shop', 'grocery'],
     ],
+    keywords: ['groceries', 'grocery', 'supermarket', 'market', 'food store'],
   },
   {
     id: 'gas',
@@ -56,6 +89,7 @@ export const CATEGORIES: Category[] = [
     glyph:
       '<path d="M5 21V6a2 2 0 0 1 2-2h5a2 2 0 0 1 2 2v15"/><path d="M4 21h11"/><path d="M7 9h5"/><path d="M14 9l3 3v6a2 2 0 0 0 3 0V10l-3-3"/>',
     osm: [['amenity', 'fuel']],
+    keywords: ['gas', 'fuel', 'petrol', 'gasoline', 'gas station'],
   },
   {
     id: 'hotels',
@@ -67,6 +101,7 @@ export const CATEGORIES: Category[] = [
       ['tourism', 'hotel'],
       ['tourism', 'motel'],
     ],
+    keywords: ['hotel', 'hotels', 'motel', 'lodging', 'lodge', 'inn', 'stay', 'accommodation'],
   },
   {
     id: 'shopping',
@@ -78,6 +113,7 @@ export const CATEGORIES: Category[] = [
       ['shop', 'department_store'],
       ['shop', 'clothes'],
     ],
+    keywords: ['shopping', 'mall', 'shops', 'store', 'stores', 'outlet', 'clothes'],
   },
   {
     id: 'parks',
@@ -85,6 +121,7 @@ export const CATEGORIES: Category[] = [
     color: '#34C759',
     glyph: '<path d="M12 3 6 12h3l-3 5h12l-3-5h3L12 3Z"/><path d="M12 17v4"/>',
     osm: [['leisure', 'park']],
+    keywords: ['park', 'parks', 'playground', 'green space'],
   },
   {
     id: 'bars',
@@ -95,6 +132,7 @@ export const CATEGORIES: Category[] = [
       ['amenity', 'bar'],
       ['amenity', 'pub'],
     ],
+    keywords: ['bar', 'bars', 'pub', 'pubs', 'drinks', 'nightlife', 'brewery', 'tavern', 'cocktails'],
   },
   {
     id: 'surf',
@@ -105,6 +143,7 @@ export const CATEGORIES: Category[] = [
       ['sport', 'surfing'],
       ['natural', 'beach'],
     ],
+    keywords: ['surf', 'surfing', 'waves', 'beach', 'beaches', 'surf spot'],
   },
   {
     id: 'ski',
@@ -115,6 +154,7 @@ export const CATEGORIES: Category[] = [
       ['sport', 'skiing'],
       ['landuse', 'winter_sports'],
     ],
+    keywords: ['ski', 'skiing', 'snowboard', 'snowboarding', 'slopes', 'ski resort'],
   },
   {
     id: 'climb',
@@ -122,6 +162,7 @@ export const CATEGORIES: Category[] = [
     color: '#AF52DE',
     glyph: '<circle cx="14" cy="5" r="1.6"/><path d="M13 8l-4 3 3 3-2 6"/><path d="M12 14l5 2 3-2"/><path d="M9 11l-4 1"/>',
     osm: [['sport', 'climbing']],
+    keywords: ['climb', 'climbing', 'bouldering', 'rock climbing'],
   },
   {
     id: 'golf',
@@ -129,6 +170,7 @@ export const CATEGORIES: Category[] = [
     color: '#30D158',
     glyph: '<path d="M11 3v14"/><path d="M11 5l6 2-6 2"/><path d="M6 21c1-1.5 3-2 5-2s4 .5 5 2"/>',
     osm: [['leisure', 'golf_course']],
+    keywords: ['golf', 'golf course', 'driving range'],
   },
   {
     id: 'camp',
@@ -139,9 +181,41 @@ export const CATEGORIES: Category[] = [
       ['tourism', 'camp_site'],
       ['tourism', 'wilderness_hut'],
     ],
+    keywords: ['camp', 'camping', 'campground', 'campsite', 'campsites'],
   },
 ];
 
 export function categoryById(id: string | undefined): Category | undefined {
   return id ? CATEGORIES.find((c) => c.id === id) : undefined;
+}
+
+const FILLER = /\b(near ?me|near ?by|around ?me|close ?by|closest|nearest|places?|spots?|good|best|cheap|open|the|a|some)\b/g;
+
+/**
+ * Map a free-text query to a category so "food", "dinner", "lunch", "coffee",
+ * "gas", etc. behave like tapping the matching category chip. Returns undefined
+ * when the query looks like a specific place name (handled by geocoding).
+ */
+export function matchCategory(query: string): Category | undefined {
+  const q = query
+    .toLowerCase()
+    .replace(FILLER, ' ')
+    .replace(/[^a-zà-ÿ\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!q) return undefined;
+
+  // Whole-phrase match first (handles "gas station", "ski resort", …).
+  for (const c of CATEGORIES) {
+    if (c.label.toLowerCase() === q || c.keywords.includes(q)) return c;
+  }
+  // Otherwise, a short query whose words include a category keyword.
+  const tokens = q.split(' ');
+  if (tokens.length <= 3) {
+    for (const c of CATEGORIES) {
+      const set = new Set([c.label.toLowerCase(), ...c.keywords]);
+      if (tokens.some((t) => set.has(t))) return c;
+    }
+  }
+  return undefined;
 }
