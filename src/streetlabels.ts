@@ -1,4 +1,5 @@
 import * as Cesium from 'cesium';
+import { overpassQuery } from './overpass';
 
 /**
  * Apple-Maps-style street name labels. Google Photorealistic 3D Tiles ship
@@ -7,13 +8,6 @@ import * as Cesium from 'cesium';
  * scene. Labels refresh as the camera settles at street level and are cached
  * per coarse view tile so panning around doesn't hammer Overpass.
  */
-
-const ENDPOINTS = [
-  'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.private.coffee/api/interpreter',
-  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
-];
 
 // Only show labels when the camera is near the ground (metres of altitude).
 const MIN_ALTITUDE = 5;
@@ -82,36 +76,21 @@ export class StreetLabels {
   }
 
   /**
-   * The ground area to label, centred on what the camera is looking at. We do
-   * NOT use camera.computeViewRectangle(): in a tilted 3D view it returns null
-   * or a huge horizon-spanning rectangle, which caused labels to silently never
-   * load. Instead we centre on the surface point under the screen centre and
-   * take a span scaled to altitude.
+   * The ground area to label, centred on the camera's own ground position
+   * (the point directly below the camera). We deliberately do NOT centre on the
+   * screen-centre pick: in a tilted chase view the crosshair shoots toward the
+   * horizon, so labels would load tens of km ahead of the user instead of
+   * around them. And we don't use camera.computeViewRectangle() — in a tilted
+   * view it returns null / a huge rectangle, which made labels never load.
    */
   private viewArea(): { s: number; w: number; n: number; e: number } | null {
-    const scene = this.viewer.scene;
-    const canvas = scene.canvas;
-    const mid = new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
-    let world: Cesium.Cartesian3 | undefined;
-    try {
-      world = scene.pickPosition(mid); // real surface (3D tiles) under the crosshair
-    } catch {
-      world = undefined;
-    }
-    if (!world) world = this.viewer.camera.pickEllipsoid(mid, scene.globe.ellipsoid) ?? undefined;
-    // Looking at the sky/horizon: fall back to the camera's own ground position.
-    if (!world) world = this.viewer.camera.positionWC;
-    if (!world) return null;
-
-    const carto = Cesium.Cartographic.fromCartesian(world);
+    const carto = Cesium.Cartographic.fromCartesian(this.viewer.camera.positionWC);
     const lon = Cesium.Math.toDegrees(carto.longitude);
     const lat = Cesium.Math.toDegrees(carto.latitude);
     if (!isFinite(lon) || !isFinite(lat)) return null;
-
-    const alt = this.altitude();
     // Span grows with altitude but is floored so we always cover a readable
-    // neighbourhood, and capped so we never over-fetch.
-    const half = Math.min(Math.max((alt / 111000) * 0.75, 0.006), MAX_SPAN_DEG / 2);
+    // neighbourhood (~4 km), and capped so we never over-fetch.
+    const half = Math.min(Math.max((carto.height / 111000) * 0.9, 0.02), MAX_SPAN_DEG / 2);
     const cosLat = Math.max(Math.cos(Cesium.Math.toRadians(lat)), 0.2);
     return { s: lat - half, n: lat + half, w: lon - half / cosLat, e: lon + half / cosLat };
   }
@@ -133,7 +112,6 @@ export class StreetLabels {
 
     const key = `${s.toFixed(2)},${w.toFixed(2)},${n.toFixed(2)},${e.toFixed(2)}`;
     if (key === this.lastKey) return;
-    this.lastKey = key;
 
     const current = ++this.token;
     let items = this.cache.get(key);
@@ -142,7 +120,7 @@ export class StreetLabels {
       const fetched = await this.fetchLabels(s, w, n, e);
       if (current !== this.token) return;
       if (!fetched) {
-        this.lastKey = '';
+        // Leave lastKey unchanged so this view retries on the next settle.
         if (this.announce) {
           this.announce = false;
           this.statusHandler?.('error');
@@ -153,6 +131,8 @@ export class StreetLabels {
       this.cache.set(key, items);
     }
     this.draw(items);
+    // Only mark this view handled once it has actually been drawn.
+    this.lastKey = key;
     if (this.announce) {
       this.announce = false;
       this.statusHandler?.(items.length ? 'done' : 'empty');
@@ -171,25 +151,7 @@ export class StreetLabels {
       `way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|unclassified|living_street|pedestrian)$"]["name"](${bbox});` +
       `node["place"~"^(city|town|village|suburb|neighbourhood)$"]["name"](${bbox});` +
       `);out geom ${MAX_LABELS * 4};`;
-    let data: { elements?: OverpassWay[] } | null = null;
-    for (const endpoint of ENDPOINTS) {
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 12000);
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: `data=${encodeURIComponent(query)}`,
-          signal: controller.signal,
-        });
-        clearTimeout(timer);
-        if (!res.ok) continue;
-        data = await res.json();
-        break;
-      } catch {
-        /* try the next mirror */
-      }
-    }
+    const data = await overpassQuery<OverpassWay>(query);
     if (!data?.elements) return null;
 
     const out: { lon: number; lat: number; text: string; kind: 'road' | 'place' }[] = [];

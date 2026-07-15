@@ -2,6 +2,7 @@ import type { LngLat } from './geo';
 import type { PlaceResult, PlaceDetails, OsmType } from './geocode';
 import type { Category } from './categories';
 import { haversine } from './routing';
+import { overpassQuery } from './overpass';
 
 /**
  * "Find nearby" search for a category (restaurants, hotels, gas, …) using the
@@ -10,14 +11,6 @@ import { haversine } from './routing';
  * exactly what the category chips need — just like Apple Maps' nearby search.
  */
 
-// The public Overpass instances are rate-limited and occasionally busy, so we
-// try a few well-known mirrors in turn before giving up.
-const ENDPOINTS = [
-  'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.private.coffee/api/interpreter',
-  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
-];
 const RADIUS_M = 3000;
 const MAX_RESULTS = 18;
 
@@ -71,26 +64,9 @@ export async function searchNearby(cat: Category, near: LngLat): Promise<PlaceRe
 }
 
 async function fetchOverpass(query: string): Promise<{ elements?: OverpassElement[] }> {
-  let lastErr: unknown;
-  for (const endpoint of ENDPOINTS) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12000);
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `data=${encodeURIComponent(query)}`,
-        signal: controller.signal,
-      });
-      if (!res.ok) throw new Error(`Nearby search failed (${res.status})`);
-      return await res.json();
-    } catch (err) {
-      lastErr = err;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  throw lastErr instanceof Error ? lastErr : new Error('Nearby search failed');
+  const data = await overpassQuery<OverpassElement>(query);
+  if (!data) throw new Error('Nearby search failed');
+  return data;
 }
 
 function detailLine(tags: Record<string, string>): string {

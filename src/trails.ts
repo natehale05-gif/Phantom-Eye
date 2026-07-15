@@ -1,4 +1,5 @@
 import * as Cesium from 'cesium';
+import { overpassQuery } from './overpass';
 
 /**
  * Trail overlays for Offroad (4x4/OHV), Hiking, and Bike — the OnX-style layers.
@@ -17,13 +18,6 @@ import * as Cesium from 'cesium';
 
 export type TrailLayerId = 'offroad' | 'hiking' | 'bike';
 export type TrailStatus = 'loading' | 'done' | 'empty' | 'error';
-
-const ENDPOINTS = [
-  'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.private.coffee/api/interpreter',
-  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
-];
 
 // Only fetch trails when reasonably close (metres of camera altitude).
 const MAX_ALTITUDE = 22000;
@@ -147,29 +141,17 @@ export class TrailLayers {
   }
 
   /**
-   * Ground area to query, centred on what the camera is looking at. Avoids
-   * camera.computeViewRectangle() which returns null / a huge rectangle in a
-   * tilted 3D view, silently preventing trails from ever loading.
+   * Ground area to query, centred on the camera's own ground position (near the
+   * user in a chase view), not the screen-centre pick (which shoots toward the
+   * horizon in a tilted view) and not camera.computeViewRectangle() (null / a
+   * huge rectangle when tilted — which silently prevented trails from loading).
    */
   private viewArea(): { s: number; w: number; n: number; e: number } | null {
-    const scene = this.viewer.scene;
-    const canvas = scene.canvas;
-    const mid = new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
-    let world: Cesium.Cartesian3 | undefined;
-    try {
-      world = scene.pickPosition(mid);
-    } catch {
-      world = undefined;
-    }
-    if (!world) world = this.viewer.camera.pickEllipsoid(mid, scene.globe.ellipsoid) ?? undefined;
-    if (!world) world = this.viewer.camera.positionWC;
-    if (!world) return null;
-    const carto = Cesium.Cartographic.fromCartesian(world);
+    const carto = Cesium.Cartographic.fromCartesian(this.viewer.camera.positionWC);
     const lon = Cesium.Math.toDegrees(carto.longitude);
     const lat = Cesium.Math.toDegrees(carto.latitude);
     if (!isFinite(lon) || !isFinite(lat)) return null;
-    const alt = this.altitude();
-    const half = Math.min(Math.max((alt / 111000) * 0.75, 0.008), MAX_SPAN_DEG / 2);
+    const half = Math.min(Math.max((carto.height / 111000) * 0.9, 0.02), MAX_SPAN_DEG / 2);
     const cosLat = Math.max(Math.cos(Cesium.Math.toRadians(lat)), 0.2);
     return { s: lat - half, n: lat + half, w: lon - half / cosLat, e: lon + half / cosLat };
   }
@@ -193,7 +175,6 @@ export class TrailLayers {
 
     const key = `${s.toFixed(2)},${w.toFixed(2)},${n.toFixed(2)},${e.toFixed(2)}`;
     if (key === layer.lastKey) return;
-    layer.lastKey = key;
 
     const current = ++layer.token;
     let ways = layer.cache.get(key);
@@ -203,7 +184,7 @@ export class TrailLayers {
       // A newer refresh for this layer superseded us, or it was turned off.
       if (current !== layer.token || !layer.enabled) return;
       if (!fetched) {
-        layer.lastKey = '';
+        // Leave lastKey unchanged so this view retries on the next settle.
         if (layer.announce) {
           layer.announce = false;
           this.statusHandler?.(id, 'error', 0);
@@ -214,6 +195,8 @@ export class TrailLayers {
       layer.cache.set(key, ways);
     }
     this.draw(layer, ways);
+    // Only mark this view handled once it has actually been drawn.
+    layer.lastKey = key;
     this.viewer.scene.requestRender();
     if (layer.announce) {
       layer.announce = false;
@@ -230,26 +213,12 @@ export class TrailLayers {
   ): Promise<TrailWay[] | null> {
     const bbox = `(${s},${w},${n},${e})`;
     const body = QUERY[id](bbox);
-    const query = `[out:json][timeout:25];(${body});out geom ${MAX_WAYS};`;
-    let data: { elements?: OverpassWay[] } | null = null;
-    for (const endpoint of ENDPOINTS) {
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 15000);
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: `data=${encodeURIComponent(query)}`,
-          signal: controller.signal,
-        });
-        clearTimeout(timer);
-        if (!res.ok) continue;
-        data = await res.json();
-        break;
-      } catch {
-        /* try next mirror */
-      }
-    }
+    // Every union member must end with ';' — including the last one before the
+    // closing ')'. `.join(';')` omits the trailing one, which Overpass rejects
+    // with a 400, so normalise it here.
+    const inner = body.endsWith(';') ? body : `${body};`;
+    const query = `[out:json][timeout:25];(${inner});out geom ${MAX_WAYS};`;
+    const data = await overpassQuery<OverpassWay>(query);
     if (!data?.elements) return null;
 
     const grader = GRADERS[id];
