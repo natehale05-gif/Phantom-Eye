@@ -148,7 +148,7 @@ function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field):
 
   wireSearch(shell, globe, nav, field);
   wireCategories(shell, globe, nav, field);
-  wireMapControls(shell, globe, field);
+  wireMapControls(shell, globe);
 }
 
 let chipToken = 0;
@@ -186,11 +186,7 @@ async function updateWeatherChip(shell: Shell, lat: number, lon: number): Promis
   }
 }
 
-function wireMapControls(shell: Shell, globe: Globe, field: Field): void {
-  shell.ctrlZoomIn.addEventListener('click', () => globe.zoomIn());
-  shell.ctrlZoomOut.addEventListener('click', () => globe.zoomOut());
-  shell.ctrlTilt.addEventListener('click', () => globe.toggleTilt());
-  shell.ctrlLocate.addEventListener('click', () => field.recenter());
+function wireMapControls(shell: Shell, globe: Globe): void {
   shell.ctrlCompass.addEventListener('click', () => globe.resetNorth());
 
   // Keep the compass needle pointing to true north as the camera turns.

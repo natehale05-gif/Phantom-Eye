@@ -43,10 +43,6 @@ export interface Shell {
   hud: HTMLElement;
   controls: HTMLElement;
   ctrlCompass: HTMLButtonElement;
-  ctrlLocate: HTMLButtonElement;
-  ctrlZoomIn: HTMLButtonElement;
-  ctrlZoomOut: HTMLButtonElement;
-  ctrlTilt: HTMLButtonElement;
   loading: HTMLElement;
   loadingLabel: HTMLElement;
 }
@@ -145,16 +141,7 @@ export function buildShell(mount: HTMLElement): Shell {
   const ctrlBtn = (cls: string, title: string, inner: string) =>
     el('button', { class: `ctrl-btn ${cls}`, type: 'button', title, innerHTML: inner }) as HTMLButtonElement;
   const ctrlCompass = ctrlBtn('ctrl-compass', 'Face north', icons.compass);
-  const ctrlLocate = ctrlBtn('', 'My location', icons.locate);
-  const ctrlZoomIn = ctrlBtn('', 'Zoom in', icons.plus);
-  const ctrlZoomOut = ctrlBtn('', 'Zoom out', icons.minus);
-  const ctrlTilt = ctrlBtn('', '2D / 3D', icons.cube);
-  const controls = el('div', { class: 'controls' }, [
-    ctrlCompass,
-    el('div', { class: 'ctrl-group glass' }, [ctrlZoomIn, el('div', { class: 'ctrl-div' }), ctrlZoomOut]),
-    ctrlTilt,
-    ctrlLocate,
-  ]);
+  const controls = el('div', { class: 'controls' }, [ctrlCompass]);
 
   // --- Loading ---
   const loadingLabel = el('div', { class: 'loading-label', textContent: 'Loading' });
@@ -205,10 +192,6 @@ export function buildShell(mount: HTMLElement): Shell {
     hud,
     controls,
     ctrlCompass,
-    ctrlLocate,
-    ctrlZoomIn,
-    ctrlZoomOut,
-    ctrlTilt,
     loading,
     loadingLabel,
   };
