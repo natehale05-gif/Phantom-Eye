@@ -16,8 +16,8 @@ const ENDPOINTS = [
 ];
 
 // Only show labels when the camera is near the ground (metres of altitude).
-const MIN_ALTITUDE = 30;
-const MAX_ALTITUDE = 6500;
+const MIN_ALTITUDE = 5;
+const MAX_ALTITUDE = 8000;
 const MAX_SPAN_DEG = 0.45;
 const MAX_LABELS = 70;
 
@@ -81,8 +81,39 @@ export class StreetLabels {
     return Cesium.Cartographic.fromCartesian(this.viewer.camera.positionWC).height;
   }
 
-  private viewRect(): Cesium.Rectangle | null {
-    return this.viewer.camera.computeViewRectangle(this.viewer.scene.globe.ellipsoid) ?? null;
+  /**
+   * The ground area to label, centred on what the camera is looking at. We do
+   * NOT use camera.computeViewRectangle(): in a tilted 3D view it returns null
+   * or a huge horizon-spanning rectangle, which caused labels to silently never
+   * load. Instead we centre on the surface point under the screen centre and
+   * take a span scaled to altitude.
+   */
+  private viewArea(): { s: number; w: number; n: number; e: number } | null {
+    const scene = this.viewer.scene;
+    const canvas = scene.canvas;
+    const mid = new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
+    let world: Cesium.Cartesian3 | undefined;
+    try {
+      world = scene.pickPosition(mid); // real surface (3D tiles) under the crosshair
+    } catch {
+      world = undefined;
+    }
+    if (!world) world = this.viewer.camera.pickEllipsoid(mid, scene.globe.ellipsoid) ?? undefined;
+    // Looking at the sky/horizon: fall back to the camera's own ground position.
+    if (!world) world = this.viewer.camera.positionWC;
+    if (!world) return null;
+
+    const carto = Cesium.Cartographic.fromCartesian(world);
+    const lon = Cesium.Math.toDegrees(carto.longitude);
+    const lat = Cesium.Math.toDegrees(carto.latitude);
+    if (!isFinite(lon) || !isFinite(lat)) return null;
+
+    const alt = this.altitude();
+    // Span grows with altitude but is floored so we always cover a readable
+    // neighbourhood, and capped so we never over-fetch.
+    const half = Math.min(Math.max((alt / 111000) * 0.75, 0.006), MAX_SPAN_DEG / 2);
+    const cosLat = Math.max(Math.cos(Cesium.Math.toRadians(lat)), 0.2);
+    return { s: lat - half, n: lat + half, w: lon - half / cosLat, e: lon + half / cosLat };
   }
 
   private async refresh(): Promise<void> {
@@ -96,15 +127,9 @@ export class StreetLabels {
       this.lastKey = '';
       return;
     }
-    const rect = this.viewRect();
-    if (!rect) return;
-
-    const s = Cesium.Math.toDegrees(rect.south);
-    const w = Cesium.Math.toDegrees(rect.west);
-    const n = Cesium.Math.toDegrees(rect.north);
-    const e = Cesium.Math.toDegrees(rect.east);
-    // Guard against huge (whole-globe) rectangles.
-    if (n - s > MAX_SPAN_DEG || e - w > MAX_SPAN_DEG) return;
+    const area = this.viewArea();
+    if (!area) return;
+    const { s, w, n, e } = area;
 
     const key = `${s.toFixed(2)},${w.toFixed(2)},${n.toFixed(2)},${e.toFixed(2)}`;
     if (key === this.lastKey) return;

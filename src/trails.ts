@@ -146,12 +146,40 @@ export class TrailLayers {
     return Cesium.Cartographic.fromCartesian(this.viewer.camera.positionWC).height;
   }
 
+  /**
+   * Ground area to query, centred on what the camera is looking at. Avoids
+   * camera.computeViewRectangle() which returns null / a huge rectangle in a
+   * tilted 3D view, silently preventing trails from ever loading.
+   */
+  private viewArea(): { s: number; w: number; n: number; e: number } | null {
+    const scene = this.viewer.scene;
+    const canvas = scene.canvas;
+    const mid = new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
+    let world: Cesium.Cartesian3 | undefined;
+    try {
+      world = scene.pickPosition(mid);
+    } catch {
+      world = undefined;
+    }
+    if (!world) world = this.viewer.camera.pickEllipsoid(mid, scene.globe.ellipsoid) ?? undefined;
+    if (!world) world = this.viewer.camera.positionWC;
+    if (!world) return null;
+    const carto = Cesium.Cartographic.fromCartesian(world);
+    const lon = Cesium.Math.toDegrees(carto.longitude);
+    const lat = Cesium.Math.toDegrees(carto.latitude);
+    if (!isFinite(lon) || !isFinite(lat)) return null;
+    const alt = this.altitude();
+    const half = Math.min(Math.max((alt / 111000) * 0.75, 0.008), MAX_SPAN_DEG / 2);
+    const cosLat = Math.max(Math.cos(Cesium.Math.toRadians(lat)), 0.2);
+    return { s: lat - half, n: lat + half, w: lon - half / cosLat, e: lon + half / cosLat };
+  }
+
   private async refreshLayer(id: TrailLayerId): Promise<void> {
     const layer = this.layers[id];
     if (!layer.enabled) return;
 
-    const rect = this.viewer.camera.computeViewRectangle(this.viewer.scene.globe.ellipsoid);
-    if (!rect || this.altitude() > MAX_ALTITUDE) {
+    const area = this.altitude() > MAX_ALTITUDE ? null : this.viewArea();
+    if (!area) {
       if (layer.ds.entities.values.length) layer.ds.entities.removeAll();
       layer.lastKey = '';
       if (layer.announce) {
@@ -161,11 +189,7 @@ export class TrailLayers {
       this.viewer.scene.requestRender();
       return;
     }
-    const s = Cesium.Math.toDegrees(rect.south);
-    const w = Cesium.Math.toDegrees(rect.west);
-    const n = Cesium.Math.toDegrees(rect.north);
-    const e = Cesium.Math.toDegrees(rect.east);
-    if (n - s > MAX_SPAN_DEG || e - w > MAX_SPAN_DEG) return;
+    const { s, w, n, e } = area;
 
     const key = `${s.toFixed(2)},${w.toFixed(2)},${n.toFixed(2)},${e.toFixed(2)}`;
     if (key === layer.lastKey) return;
