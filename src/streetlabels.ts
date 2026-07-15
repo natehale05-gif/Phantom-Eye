@@ -37,7 +37,12 @@ export class StreetLabels {
   private readonly cache = new Map<string, { lon: number; lat: number; text: string; kind: 'road' | 'place' }[]>();
 
   constructor(private readonly viewer: Cesium.Viewer) {
-    this.collection = viewer.scene.primitives.add(new Cesium.LabelCollection());
+    // `scene` is REQUIRED for labels that clamp to the ground/terrain — without
+    // it, Cesium throws "undefined is not an object (a.globe)" the moment a
+    // clamped label is drawn.
+    this.collection = viewer.scene.primitives.add(
+      new Cesium.LabelCollection({ scene: viewer.scene }),
+    );
   }
 
   setEnabled(on: boolean): void {

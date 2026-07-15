@@ -183,13 +183,16 @@ export class TrailLayers {
 
   private draw(layer: LayerState, ways: TrailWay[]): void {
     layer.ds.entities.removeAll();
+    // Ground-clamped polylines need GroundPolylinePrimitive support; on GPUs
+    // that lack it we draw plain (depth-tested) lines instead of crashing.
+    const clamp = Cesium.GroundPolylinePrimitive.isSupported(this.viewer.scene);
     for (const way of ways) {
       layer.ds.entities.add({
         polyline: {
           positions: Cesium.Cartesian3.fromDegreesArray(way.coords),
           width: 4,
-          clampToGround: true,
-          classificationType: Cesium.ClassificationType.BOTH,
+          clampToGround: clamp,
+          classificationType: clamp ? Cesium.ClassificationType.BOTH : undefined,
           material: DIFFICULTY[way.grade],
         },
       });
