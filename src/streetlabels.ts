@@ -35,6 +35,7 @@ export class StreetLabels {
   private enabled = true;
   private debounce?: number;
   private token = 0;
+  private drawGen = 0;
   private lastKey = '';
   private readonly cache = new Map<string, { lon: number; lat: number; text: string; kind: 'road' | 'place' }[]>();
 
@@ -172,9 +173,16 @@ export class StreetLabels {
 
   private draw(items: { lon: number; lat: number; text: string; kind: 'road' | 'place' }[]): void {
     this.collection.removeAll();
+    const gen = ++this.drawGen;
+    const labels: Cesium.Label[] = [];
     for (const it of items) {
       const place = it.kind === 'place';
-      this.collection.add({
+      const label = this.collection.add({
+        // Placed at sea level first, then lifted onto the real photoreal
+        // surface by clampToSurface(). We deliberately do NOT use
+        // CLAMP_TO_GROUND here: with Google 3D Tiles the ground reference is the
+        // ellipsoid (sea level), which sits far below the tiles, so clamped
+        // labels appear buried under the map.
         position: Cesium.Cartesian3.fromDegrees(it.lon, it.lat, 0),
         text: it.text,
         font: place
@@ -184,12 +192,42 @@ export class StreetLabels {
         outlineColor: new Cesium.Color(0, 0, 0, 0.85),
         outlineWidth: 3,
         style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+        verticalOrigin: Cesium.VerticalOrigin.CENTER,
+        horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
         scaleByDistance: new Cesium.NearFarScalar(200, 1, 3000, place ? 0.75 : 0.55),
         translucencyByDistance: new Cesium.NearFarScalar(1800, 1, 3000, 0),
-        pixelOffset: place ? new Cesium.Cartesian2(0, 0) : new Cesium.Cartesian2(0, 0),
       });
+      labels.push(label);
+    }
+    this.viewer.scene.requestRender();
+    void this.clampToSurface(gen, items, labels);
+  }
+
+  /**
+   * Lift each label onto the photoreal 3D surface by sampling the real tile
+   * height at its position, so names sit on the road instead of underground.
+   */
+  private async clampToSurface(
+    gen: number,
+    items: { lon: number; lat: number }[],
+    labels: Cesium.Label[],
+  ): Promise<void> {
+    if (labels.length === 0) return;
+    const flat = items.map((it) => Cesium.Cartesian3.fromDegrees(it.lon, it.lat, 0));
+    let clamped: (Cesium.Cartesian3 | undefined)[];
+    try {
+      clamped = await this.viewer.scene.clampToHeightMostDetailed(flat);
+    } catch {
+      return;
+    }
+    if (gen !== this.drawGen) return; // superseded by a newer draw
+    for (let i = 0; i < labels.length; i++) {
+      const c = clamped[i];
+      if (!c) continue;
+      const h = Cesium.Cartographic.fromCartesian(c).height;
+      if (!isFinite(h)) continue;
+      labels[i].position = Cesium.Cartesian3.fromDegrees(items[i].lon, items[i].lat, h + 2);
     }
     this.viewer.scene.requestRender();
   }

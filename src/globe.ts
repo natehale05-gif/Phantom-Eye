@@ -132,7 +132,7 @@ export class Globe {
     this.streetLabels?.setEnabled(on);
   }
 
-  /** Toggle a trail overlay (offroad / hiking / mtb), coloured by difficulty. */
+  /** Toggle a trail overlay (offroad / hiking / bike), coloured by difficulty. */
   setTrailLayer(id: TrailLayerId, on: boolean): void {
     this.trails?.setEnabled(id, on);
   }

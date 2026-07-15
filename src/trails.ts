@@ -1,19 +1,21 @@
 import * as Cesium from 'cesium';
 
 /**
- * Trail overlays for Offroad (4x4/OHV), Hiking, and MTB — the OnX-style layers.
+ * Trail overlays for Offroad (4x4/OHV), Hiking, and Bike — the OnX-style layers.
  * Trails are sourced from OpenStreetMap (Overpass) for the current view and
- * drawn as ground-clamped polylines coloured by difficulty:
+ * drawn coloured by difficulty:
  *
  *   green  = easy        blue = intermediate
  *   black  = advanced    red  = expert / very difficult
- *   grey   = unrated (no difficulty tagged in OSM)
  *
- * Each layer is independent and refreshes as the camera settles, with results
- * cached per coarse view tile so panning doesn't hammer Overpass.
+ * Lines are draped onto the photoreal surface by sampling the actual tile
+ * height at each vertex (the ellipsoid sits well below the 3D tiles, so plain
+ * ground-clamping buries them). Each layer is independent and refreshes as the
+ * camera settles, with results cached per coarse view tile so panning doesn't
+ * hammer Overpass.
  */
 
-export type TrailLayerId = 'offroad' | 'hiking' | 'mtb';
+export type TrailLayerId = 'offroad' | 'hiking' | 'bike';
 export type TrailStatus = 'loading' | 'done' | 'empty' | 'error';
 
 const ENDPOINTS = [
@@ -38,10 +40,32 @@ const DIFFICULTY = {
 
 type Grade = keyof typeof DIFFICULTY;
 
+interface OverpassGeom {
+  lat: number;
+  lon: number;
+}
+
 interface OverpassWay {
   type: string;
   tags?: Record<string, string>;
-  geometry?: { lat: number; lon: number }[];
+  geometry?: OverpassGeom[];
+  members?: { type: string; role?: string; geometry?: OverpassGeom[] }[];
+}
+
+// Keep each way lightweight so height-sampling and rendering stay cheap.
+const MAX_PTS_PER_WAY = 48;
+
+function downsampleCoords(coords: number[]): number[] {
+  const n = coords.length / 2;
+  if (n <= MAX_PTS_PER_WAY) return coords;
+  const stride = Math.ceil(n / MAX_PTS_PER_WAY);
+  const out: number[] = [];
+  for (let i = 0; i < n; i += stride) out.push(coords[i * 2], coords[i * 2 + 1]);
+  // Always keep the final vertex so the line reaches its true end.
+  const lastLon = coords[(n - 1) * 2];
+  const lastLat = coords[(n - 1) * 2 + 1];
+  if (out[out.length - 2] !== lastLon || out[out.length - 1] !== lastLat) out.push(lastLon, lastLat);
+  return out;
 }
 
 interface TrailWay {
@@ -70,7 +94,7 @@ export class TrailLayers {
       void viewer.dataSources.add(ds);
       return { enabled: false, ds, cache: new Map(), lastKey: '', token: 0, announce: false };
     };
-    this.layers = { offroad: make('offroad'), hiking: make('hiking'), mtb: make('mtb') };
+    this.layers = { offroad: make('offroad'), hiking: make('hiking'), bike: make('bike') };
   }
 
   /** Report load state (loading/done/empty/error) after a user enables a layer. */
@@ -206,32 +230,97 @@ export class TrailLayers {
 
     const grader = GRADERS[id];
     const out: TrailWay[] = [];
-    for (const el of data.elements) {
-      if (el.type !== 'way' || !el.geometry || el.geometry.length < 2) continue;
+    const push = (geom: OverpassGeom[], tags: Record<string, string>): void => {
+      if (!geom || geom.length < 2) return;
       const coords: number[] = [];
-      for (const p of el.geometry) coords.push(p.lon, p.lat);
-      out.push({ coords, grade: grader(el.tags ?? {}) });
+      for (const p of geom) coords.push(p.lon, p.lat);
+      out.push({ coords: downsampleCoords(coords), grade: grader(tags) });
+    };
+    for (const el of data.elements) {
       if (out.length >= MAX_WAYS) break;
+      if (el.type === 'way' && el.geometry) {
+        push(el.geometry, el.tags ?? {});
+      } else if (el.type === 'relation' && el.members) {
+        // Signed cycle/route relations: draw each member way with the
+        // relation's tags so the whole route shares one difficulty colour.
+        for (const m of el.members) {
+          if (out.length >= MAX_WAYS) break;
+          if (m.type === 'way' && m.geometry) push(m.geometry, el.tags ?? {});
+        }
+      }
     }
     return out;
   }
 
   private draw(layer: LayerState, ways: TrailWay[]): void {
     layer.ds.entities.removeAll();
-    // Ground-clamped polylines need GroundPolylinePrimitive support; on GPUs
-    // that lack it we draw plain (depth-tested) lines instead of crashing.
-    const clamp = Cesium.GroundPolylinePrimitive.isSupported(this.viewer.scene);
+    const gen = layer.token;
+    const entries: { entity: Cesium.Entity; coords: number[] }[] = [];
     for (const way of ways) {
-      layer.ds.entities.add({
+      const color = DIFFICULTY[way.grade];
+      const entity = layer.ds.entities.add({
         polyline: {
+          // Start slightly above the ellipsoid; corrected to the true surface
+          // height once sampling completes (see clampToSurface).
           positions: Cesium.Cartesian3.fromDegreesArray(way.coords),
-          width: 4,
-          clampToGround: clamp,
-          classificationType: clamp ? Cesium.ClassificationType.BOTH : undefined,
-          material: DIFFICULTY[way.grade],
+          width: 5,
+          material: color,
+          // Draw a faint version through the terrain so the trail stays legible
+          // even where the 3D buildings/hills would otherwise occlude it.
+          depthFailMaterial: new Cesium.ColorMaterialProperty(color.withAlpha(0.55)),
         },
       });
+      entries.push({ entity, coords: way.coords });
     }
+    this.viewer.scene.requestRender();
+    void this.clampToSurface(layer, gen, entries);
+  }
+
+  /**
+   * Drape trail lines onto the photoreal 3D tiles by sampling the real surface
+   * height at every vertex in one batch, then repositioning each polyline.
+   */
+  private async clampToSurface(
+    layer: LayerState,
+    gen: number,
+    entries: { entity: Cesium.Entity; coords: number[] }[],
+  ): Promise<void> {
+    const flat: Cesium.Cartesian3[] = [];
+    const counts: number[] = [];
+    for (const e of entries) {
+      const n = e.coords.length / 2;
+      counts.push(n);
+      for (let i = 0; i < n; i++) {
+        flat.push(Cesium.Cartesian3.fromDegrees(e.coords[i * 2], e.coords[i * 2 + 1], 0));
+      }
+    }
+    if (flat.length === 0) return;
+    let clamped: (Cesium.Cartesian3 | undefined)[];
+    try {
+      clamped = await this.viewer.scene.clampToHeightMostDetailed(flat);
+    } catch {
+      return;
+    }
+    // Bail out if this layer was refreshed/disabled while we were sampling.
+    if (gen !== layer.token || !layer.enabled) return;
+    let k = 0;
+    for (let ei = 0; ei < entries.length; ei++) {
+      const e = entries[ei];
+      const positions: Cesium.Cartesian3[] = [];
+      for (let i = 0; i < counts[ei]; i++) {
+        const c = clamped[k++];
+        const lon = e.coords[i * 2];
+        const lat = e.coords[i * 2 + 1];
+        let h = 0;
+        if (c) {
+          const hh = Cesium.Cartographic.fromCartesian(c).height;
+          if (isFinite(hh)) h = hh;
+        }
+        positions.push(Cesium.Cartesian3.fromDegrees(lon, lat, h + 1.5));
+      }
+      if (e.entity.polyline) e.entity.polyline.positions = new Cesium.ConstantProperty(positions);
+    }
+    this.viewer.scene.requestRender();
   }
 }
 
@@ -246,12 +335,19 @@ const QUERY: Record<TrailLayerId, (bbox: string) => string> = {
       `way["highway"="steps"]${b}`,
       `way["sac_scale"]${b}`,
     ].join(';'),
-  mtb: (b) =>
+  bike: (b) =>
     [
+      // Dedicated cycling infrastructure
+      `way["highway"="cycleway"]${b}`,
+      `way["bicycle"="designated"]${b}`,
+      `way["cycleway"~"lane|track|shared_lane|opposite_lane"]${b}`,
+      // Off-road / mountain-bike trails
       `way["mtb:scale"]${b}`,
       `way["mtb:scale:imba"]${b}`,
-      `way["highway"="path"]["bicycle"~"designated|yes"]${b}`,
-      `way["highway"="cycleway"]["surface"~"ground|dirt|earth|gravel|fine_gravel|unpaved"]${b}`,
+      `way["highway"~"path|track"]["bicycle"~"designated|yes"]${b}`,
+      // Signed cycle routes (numbered/named networks) as relations
+      `relation["route"="bicycle"]${b}`,
+      `relation["route"="mtb"]${b}`,
     ].join(';'),
   offroad: (b) =>
     [
@@ -287,9 +383,9 @@ const GRADERS: Record<TrailLayerId, (tags: Record<string, string>) => Grade> = {
     if (t.highway === 'steps') return 'intermediate';
     if (t.trail_visibility === 'bad' || t.trail_visibility === 'horrible' || t.trail_visibility === 'no')
       return 'advanced';
-    return 'unrated';
+    return 'easy';
   },
-  mtb: (t) => {
+  bike: (t) => {
     const imba = leadingInt(t['mtb:scale:imba']);
     if (imba != null) {
       if (imba <= 1) return 'easy';
@@ -304,7 +400,8 @@ const GRADERS: Record<TrailLayerId, (tags: Record<string, string>) => Grade> = {
       if (scale === 4) return 'advanced';
       return 'expert';
     }
-    return 'unrated';
+    // Regular cycleways / bike routes have no off-road difficulty — treat as easy.
+    return 'easy';
   },
   offroad: (t) => {
     switch (t.tracktype) {
@@ -333,6 +430,6 @@ const GRADERS: Record<TrailLayerId, (tags: Record<string, string>) => Grade> = {
         return 'expert';
     }
     if (t['4wd_only'] === 'yes') return 'advanced';
-    return 'unrated';
+    return 'easy';
   },
 };
