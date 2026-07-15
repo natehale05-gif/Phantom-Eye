@@ -30,7 +30,6 @@ export interface Shell {
   menuButton: HTMLButtonElement;
   menu: HTMLElement;
   menuLocate: HTMLButtonElement;
-  menuWaypoint: HTMLButtonElement;
   menuWaypoints: HTMLButtonElement;
   menuRecord: HTMLButtonElement;
   menuLabels: HTMLButtonElement;
@@ -78,7 +77,6 @@ export function buildShell(mount: HTMLElement): Shell {
     ]);
 
   const menuLocate = item(icons.locate, 'My Location');
-  const menuWaypoint = item(icons.pin, 'Drop Waypoint');
   const menuWaypoints = item(icons.list, 'Waypoints');
   const menuRecord = item(icons.record, 'Record Track');
   const menuLabels = item(icons.labels, 'Street Names');
@@ -86,7 +84,6 @@ export function buildShell(mount: HTMLElement): Shell {
   const menuHome = item(icons.globe, 'Whole Planet');
   const menu = el('div', { class: 'menu glass' }, [
     menuLocate,
-    menuWaypoint,
     menuWaypoints,
     menuRecord,
     menuLabels,
@@ -188,7 +185,6 @@ export function buildShell(mount: HTMLElement): Shell {
     menuButton,
     menu,
     menuLocate,
-    menuWaypoint,
     menuWaypoints,
     menuRecord,
     menuLabels,

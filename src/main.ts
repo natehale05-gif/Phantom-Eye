@@ -138,10 +138,6 @@ function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field):
     collapseSearch(shell);
     closeMenu();
   });
-  shell.menuWaypoint.addEventListener('click', () => {
-    field.addWaypointHere();
-    closeMenu();
-  });
   shell.menuWaypoints.addEventListener('click', () => {
     field.toggleWaypoints();
     closeMenu();
