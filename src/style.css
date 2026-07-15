@@ -208,6 +208,12 @@ button {
 .search-result:hover {
   background: rgba(255, 255, 255, 0.1);
 }
+.search-loading {
+  padding: 14px;
+  font-size: 14px;
+  color: var(--text-dim);
+  text-align: center;
+}
 .search-result-main {
   flex: 1;
   min-width: 0;

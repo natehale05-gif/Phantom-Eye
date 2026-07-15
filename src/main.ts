@@ -62,13 +62,16 @@ async function boot(root: HTMLElement): Promise<void> {
   field = new Field(shell, globe, nav);
   wireControls(shell, globe, nav, field);
 
+  // Request the GPS fix immediately, in parallel with tile streaming, so the
+  // camera can fly to (and follow) the user the moment both are ready — the
+  // boot never stalls waiting on the location prompt.
+  const locating = field.locateOnBoot();
+
   try {
     setLoading(shell, true, 'Loading photoreal tiles');
     await globe.initPhotoreal();
-    setLoading(shell, true, 'Finding your location');
-    // Boot straight into the user's GPS location; fall back to a hero view.
-    const located = await field.locateOnBoot();
     setLoading(shell, false);
+    const located = await locating;
     if (!located) globe.flyToPlace(PLACES[0], 4.2);
   } catch (err) {
     handleTokenFailure(root, err);
@@ -116,16 +119,33 @@ function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field):
 const dirIcon =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 2 22 12 12 22 2 12Z"/><path d="M9 13v-2a2 2 0 0 1 2-2h4"/><path d="M13 6l3 3-3 3"/></svg>';
 
+interface ResultItem {
+  name: string;
+  detail: string;
+  fly: () => void;
+  directions: () => void;
+}
+
 function wireSearch(shell: Shell, globe: Globe, nav: Navigator, field: Field): void {
   let token = 0;
   let debounce: number | undefined;
+  let lastResults: ResultItem[] = [];
 
-  const render = (
-    items: { name: string; detail: string; fly: () => void; directions: () => void }[],
-  ) => {
+  const renderLoading = () => {
+    shell.searchResults.replaceChildren(
+      el('div', { class: 'search-loading', textContent: 'Searching…' }),
+    );
+    shell.searchResults.classList.add('is-open');
+  };
+
+  const render = (items: ResultItem[]) => {
+    lastResults = items;
     shell.searchResults.replaceChildren();
     if (items.length === 0) {
-      shell.searchResults.classList.remove('is-open');
+      shell.searchResults.replaceChildren(
+        el('div', { class: 'search-loading', textContent: 'No matches' }),
+      );
+      shell.searchResults.classList.add('is-open');
       return;
     }
     for (const item of items) {
@@ -160,7 +180,8 @@ function wireSearch(shell: Shell, globe: Globe, nav: Navigator, field: Field): v
   const run = async (query: string) => {
     const current = ++token;
     if (query.trim().length < 2) {
-      render([]);
+      lastResults = [];
+      collapseSearch(shell);
       return;
     }
     try {
@@ -182,10 +203,23 @@ function wireSearch(shell: Shell, globe: Globe, nav: Navigator, field: Field): v
   shell.searchInput.addEventListener('input', () => {
     window.clearTimeout(debounce);
     const value = shell.searchInput.value;
-    debounce = window.setTimeout(() => void run(value), 250);
+    if (value.trim().length < 2) {
+      lastResults = [];
+      collapseSearch(shell);
+      return;
+    }
+    renderLoading(); // instant feedback while the query is in flight
+    debounce = window.setTimeout(() => void run(value), 180);
   });
   shell.searchInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
+    if (e.key === 'Enter') {
+      // Enter jumps straight to the top result.
+      if (lastResults.length) {
+        lastResults[0].fly();
+        collapseSearch(shell);
+        shell.searchInput.blur();
+      }
+    } else if (e.key === 'Escape') {
       shell.searchInput.value = '';
       collapseSearch(shell);
       shell.searchInput.blur();

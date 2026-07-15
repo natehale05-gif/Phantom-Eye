@@ -11,6 +11,15 @@
       content="Phantom Eye — explore the planet in photorealistic 3D."
     />
     <title>Phantom Eye</title>
+
+    <!-- Warm up connections to the tile, search, and routing hosts so the
+         first request to each is faster. -->
+    <link rel="preconnect" href="https://tile.googleapis.com" crossorigin />
+    <link rel="preconnect" href="https://assets.ion.cesium.com" crossorigin />
+    <link rel="preconnect" href="https://api.cesium.com" crossorigin />
+    <link rel="preconnect" href="https://photon.komoot.io" crossorigin />
+    <link rel="preconnect" href="https://router.project-osrm.org" crossorigin />
+    <link rel="dns-prefetch" href="https://tile.googleapis.com" />
   </head>
   <body>
     <div id="app"></div>

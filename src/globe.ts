@@ -74,6 +74,11 @@ export class Globe {
       selectionIndicator: false,
       creditContainer,
       baseLayer: false,
+      // Only render when something actually changes (camera moves, tiles load,
+      // an overlay updates). Hugely reduces GPU/CPU use — faster and cooler,
+      // especially on phones — with no visual difference for an explorer app.
+      requestRenderMode: true,
+      maximumRenderTimeChange: Infinity,
     });
 
     this.tuneScene();
@@ -99,7 +104,9 @@ export class Globe {
     } catch {
       /* not supported on all GPUs */
     }
-    this.viewer.resolutionScale = Math.min(window.devicePixelRatio || 1, 2);
+    // Cap the render resolution: on high-DPI phones 1.5x looks crisp while
+    // rendering far fewer pixels than the native 3x, so it stays smooth.
+    this.viewer.resolutionScale = Math.min(window.devicePixelRatio || 1, 1.5);
 
     const ctrl = scene.screenSpaceCameraController;
     ctrl.enableCollisionDetection = true;
@@ -113,7 +120,14 @@ export class Globe {
   async initPhotoreal(): Promise<void> {
     this.photoreal = await Cesium.Cesium3DTileset.fromIonAssetId(
       GOOGLE_PHOTOREAL_ASSET_ID,
-      { maximumScreenSpaceError: 12 },
+      {
+        // 16 is Google's recommended default — noticeably faster to stream and
+        // render than an aggressive value, with negligible quality loss.
+        maximumScreenSpaceError: 16,
+        // Cap GPU memory so tiles are recycled instead of piling up on mobile.
+        cacheBytes: 512 * 1024 * 1024,
+        maximumCacheOverflowBytes: 256 * 1024 * 1024,
+      },
     );
     this.viewer.scene.primitives.add(this.photoreal);
     this.viewer.scene.requestRender();
@@ -340,6 +354,7 @@ export class Globe {
     const orientation = { heading: hRad, pitch: toRad(-28), roll: 0 };
     if (instant) {
       this.viewer.camera.setView({ destination: camPos, orientation });
+      this.viewer.scene.requestRender();
     } else {
       this.cancelDrive();
       this.viewer.camera.flyTo({
@@ -571,6 +586,7 @@ export class Globe {
       destination: camPos,
       orientation: { heading: toRad(heading), pitch: toRad(-28), roll: 0 },
     });
+    this.viewer.scene.requestRender();
   }
 
   destroy(): void {
