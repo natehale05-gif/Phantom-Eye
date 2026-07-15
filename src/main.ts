@@ -13,6 +13,9 @@ import { WeatherPage } from './weatherpage';
 import { fetchCurrentBrief, wmo } from './weather';
 import { weatherIcon } from './weathericons';
 import { hasToken, setStoredToken, clearStoredToken, getActiveToken } from './config';
+import { registerServiceWorker, downloadCurrentArea } from './offline';
+
+registerServiceWorker();
 
 const mount = document.getElementById('app');
 if (!mount) throw new Error('Missing #app mount point');
@@ -105,6 +108,16 @@ async function boot(root: HTMLElement): Promise<void> {
     const located = await locating;
     if (!located) globe.flyToPlace(PLACES[0], 4.2);
   } catch (err) {
+    setLoading(shell, false);
+    // Offline (or the tile host is unreachable): don't dump the user back to the
+    // token screen. Keep the app on the cached 2D OpenStreetMap surface, which
+    // still shows streets and lets saved/searched places work.
+    if (!navigator.onLine) {
+      toast(shell, 'Offline — showing saved map. Photoreal 3D returns when back online.');
+      const located = await locating;
+      if (!located) globe.flyWholePlanet(0);
+      return;
+    }
     handleTokenFailure(root, err);
   }
 }
@@ -137,6 +150,28 @@ function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field):
     field.toggleRecording();
     closeMenu();
   });
+
+  // Street names (OSM labels) — on by default, preference persisted.
+  const labelsOn = localStorage.getItem('nomos:labels') !== 'off';
+  const applyLabels = (on: boolean) => {
+    globe.setStreetLabels(on);
+    shell.menuLabels.classList.toggle('is-active', on);
+  };
+  applyLabels(labelsOn);
+  shell.menuLabels.addEventListener('click', () => {
+    const next = !shell.menuLabels.classList.contains('is-active');
+    localStorage.setItem('nomos:labels', next ? 'on' : 'off');
+    applyLabels(next);
+    toast(shell, next ? 'Street names on' : 'Street names off');
+    closeMenu();
+  });
+
+  // Download the current area for offline use.
+  shell.menuDownload.addEventListener('click', () => {
+    closeMenu();
+    void downloadCurrentArea(shell, globe);
+  });
+
   shell.menuHome.addEventListener('click', () => {
     if (nav.isActive) nav.end();
     globe.clearPlaces();

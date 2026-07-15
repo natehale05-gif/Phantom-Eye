@@ -3,6 +3,7 @@ import { getActiveToken } from './config';
 import type { Place } from './places';
 import { bearingDeg, type LngLat } from './geo';
 import { categoryById, DEFAULT_PIN_COLOR } from './categories';
+import { StreetLabels } from './streetlabels';
 
 /** A place that can be dropped as a map pin. */
 export interface PlacePin {
@@ -90,6 +91,8 @@ export class Globe {
   private routeEnd?: Cesium.Entity;
   private routeClampToken = 0;
 
+  private streetLabels?: StreetLabels;
+
   constructor(container: HTMLElement, creditContainer: HTMLElement) {
     Cesium.Ion.defaultAccessToken = getActiveToken();
 
@@ -115,8 +118,36 @@ export class Globe {
     });
 
     this.tuneScene();
+    this.addBaseMap();
     this.setupPicking();
+    this.streetLabels = new StreetLabels(this.viewer);
     if (import.meta.env.DEV) (window as unknown as { __Cesium: typeof Cesium }).__Cesium = Cesium;
+  }
+
+  /** Toggle Apple-Maps-style OSM street/place name labels. */
+  setStreetLabels(on: boolean): void {
+    this.streetLabels?.setEnabled(on);
+  }
+
+  /**
+   * A 2D OpenStreetMap raster base under the photoreal tiles. Online it's
+   * hidden by the 3D tiles wherever they've loaded, but it (a) makes the load-in
+   * far nicer than a black globe and (b) becomes the offline map — its tiles are
+   * cached by the service worker and carry street names, so a "Downloaded Area"
+   * stays usable with no signal. (Google's 3D tiles can't be stored offline per
+   * their license, so OSM is the offline surface.)
+   */
+  private addBaseMap(): void {
+    try {
+      const provider = new Cesium.UrlTemplateImageryProvider({
+        url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+        maximumLevel: 19,
+        credit: '© OpenStreetMap contributors',
+      });
+      this.viewer.imageryLayers.addImageryProvider(provider);
+    } catch {
+      /* imagery is a nicety; never block boot on it */
+    }
   }
 
   /** Tapping a dropped pin selects that place (opens its card). */
@@ -469,6 +500,18 @@ export class Globe {
       this.viewer.canvas.clientWidth / 2,
       this.viewer.canvas.clientHeight / 2,
     );
+  }
+
+  /** Current view bounds in degrees, or null if it can't be computed. */
+  viewBoundsDeg(): { west: number; south: number; east: number; north: number } | null {
+    const rect = this.viewer.camera.computeViewRectangle(this.viewer.scene.globe.ellipsoid);
+    if (!rect) return null;
+    return {
+      west: Cesium.Math.toDegrees(rect.west),
+      south: Cesium.Math.toDegrees(rect.south),
+      east: Cesium.Math.toDegrees(rect.east),
+      north: Cesium.Math.toDegrees(rect.north),
+    };
   }
 
   // ---------- Surface height sampling ----------

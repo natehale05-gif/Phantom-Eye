@@ -33,6 +33,8 @@ export interface Shell {
   menuWaypoint: HTMLButtonElement;
   menuWaypoints: HTMLButtonElement;
   menuRecord: HTMLButtonElement;
+  menuLabels: HTMLButtonElement;
+  menuDownload: HTMLButtonElement;
   menuHome: HTMLButtonElement;
   categories: HTMLElement;
   navPanel: HTMLElement;
@@ -79,12 +81,16 @@ export function buildShell(mount: HTMLElement): Shell {
   const menuWaypoint = item(icons.pin, 'Drop Waypoint');
   const menuWaypoints = item(icons.list, 'Waypoints');
   const menuRecord = item(icons.record, 'Record Track');
+  const menuLabels = item(icons.labels, 'Street Names');
+  const menuDownload = item(icons.download, 'Download Area');
   const menuHome = item(icons.globe, 'Whole Planet');
   const menu = el('div', { class: 'menu glass' }, [
     menuLocate,
     menuWaypoint,
     menuWaypoints,
     menuRecord,
+    menuLabels,
+    menuDownload,
     menuHome,
   ]);
   const menuButton = el('button', {
@@ -185,6 +191,8 @@ export function buildShell(mount: HTMLElement): Shell {
     menuWaypoint,
     menuWaypoints,
     menuRecord,
+    menuLabels,
+    menuDownload,
     menuHome,
     categories,
     navPanel,
@@ -285,6 +293,10 @@ const icons = {
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 17l-5.2 2.7 1-5.9-4.3-4.1 5.9-.8Z"/></svg>`,
   clock:
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>`,
+  labels:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5h16v2"/><path d="M9 5v14"/><path d="M7 19h4"/><path d="M15 10h5"/><path d="M17 10v9"/><path d="M15.5 19h3"/></svg>`,
+  download:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11"/><path d="M8 11l4 4 4-4"/><path d="M5 20h14"/></svg>`,
   maneuver: {
     depart: arrow('<circle cx="12" cy="12" r="4"/>'),
     straight: arrow('<line x1="12" y1="20" x2="12" y2="5"/><path d="M6 11l6-6 6 6"/>'),
