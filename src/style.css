@@ -986,6 +986,57 @@ button {
   color: var(--text-dim);
   background: rgba(255, 255, 255, 0.1);
 }
+.place-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+.place-card-info:empty {
+  display: none;
+}
+.place-info-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 14px;
+  line-height: 1.35;
+  color: var(--text);
+}
+.place-info-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  color: var(--text-dim);
+}
+.place-info-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.place-info-text {
+  min-width: 0;
+  word-break: break-word;
+}
+.place-info-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+.place-info-link:hover {
+  text-decoration: underline;
+}
+.place-info-state {
+  font-weight: 600;
+}
+.place-info-state.is-open {
+  color: #34c759;
+}
+.place-info-state.is-closed {
+  color: #ff453a;
+}
+
 .place-card-dir {
   margin-top: 16px;
   width: 100%;

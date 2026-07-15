@@ -11,6 +11,12 @@ export interface PlacePin {
   lon: number;
   lat: number;
   categoryId?: string;
+  osmType?: 'node' | 'way' | 'relation';
+  osmId?: number;
+  phone?: string;
+  website?: string;
+  openingHours?: string;
+  address?: string;
 }
 
 /** Cesium ion asset ID for Google Photorealistic 3D Tiles (photoreal buildings + terrain). */

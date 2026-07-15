@@ -1,5 +1,5 @@
 import type { LngLat } from './geo';
-import type { PlaceResult } from './geocode';
+import type { PlaceResult, PlaceDetails, OsmType } from './geocode';
 import type { Category } from './categories';
 import { haversine } from './routing';
 
@@ -22,6 +22,7 @@ const MAX_RESULTS = 18;
 
 interface OverpassElement {
   type: string;
+  id?: number;
   lat?: number;
   lon?: number;
   center?: { lat: number; lon: number };
@@ -58,6 +59,9 @@ export async function searchNearby(cat: Category, near: LngLat): Promise<PlaceRe
       lat: p.lat,
       category: cat.label,
       categoryId: cat.id,
+      osmType: el.type as OsmType,
+      osmId: typeof el.id === 'number' ? el.id : undefined,
+      ...tagsToDetails(tags),
     });
   }
 
@@ -94,4 +98,33 @@ function detailLine(tags: Record<string, string>): string {
       : tags['addr:street'];
   const bits = [street, tags['addr:city'], tags.cuisine?.replace(/_/g, ' ')].filter(Boolean);
   return bits.slice(0, 2).join(' · ');
+}
+
+/** Extra place details (hours, phone, website, address) from OSM tags. */
+function tagsToDetails(tags: Record<string, string>): PlaceDetails {
+  const street =
+    tags['addr:housenumber'] && tags['addr:street']
+      ? `${tags['addr:housenumber']} ${tags['addr:street']}`
+      : tags['addr:street'];
+  const address = [street, tags['addr:city'], tags['addr:state'], tags['addr:postcode']]
+    .filter(Boolean)
+    .join(', ');
+  return {
+    phone: tags.phone ?? tags['contact:phone'],
+    website: tags.website ?? tags['contact:website'] ?? tags.url,
+    openingHours: tags.opening_hours,
+    address: address || undefined,
+  };
+}
+
+/**
+ * Fetch full details (hours, phone, website, address) for a single OSM element,
+ * used to enrich a place card for results that arrived without them (e.g. from
+ * the text geocoder).
+ */
+export async function fetchPlaceDetails(osmType: OsmType, osmId: number): Promise<PlaceDetails> {
+  const query = `[out:json][timeout:15];${osmType}(${osmId});out tags;`;
+  const data = await fetchOverpass(query);
+  const tags = data.elements?.[0]?.tags;
+  return tags ? tagsToDetails(tags) : {};
 }

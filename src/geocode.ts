@@ -7,7 +7,19 @@ import type { LngLat } from './geo';
  * anywhere Apple Maps could take you. Results can be biased toward a location.
  */
 
-export interface PlaceResult {
+export type OsmType = 'node' | 'way' | 'relation';
+
+/** Extra Apple-Maps-style details for a place (may be loaded lazily). */
+export interface PlaceDetails {
+  osmType?: OsmType;
+  osmId?: number;
+  phone?: string;
+  website?: string;
+  openingHours?: string;
+  address?: string;
+}
+
+export interface PlaceResult extends PlaceDetails {
   name: string;
   detail: string;
   lon: number;
@@ -30,7 +42,11 @@ interface PhotonProps {
   postcode?: string;
   osm_key?: string;
   osm_value?: string;
+  osm_type?: string;
+  osm_id?: number;
 }
+
+const OSM_TYPE: Record<string, OsmType> = { N: 'node', W: 'way', R: 'relation' };
 
 export async function searchPlaces(query: string, near?: LngLat | null): Promise<PlaceResult[]> {
   const q = query.trim();
@@ -62,6 +78,9 @@ export async function searchPlaces(query: string, near?: LngLat | null): Promise
       lon: coords[0],
       lat: coords[1],
       category: props.osm_value ?? props.osm_key ?? '',
+      osmType: props.osm_type ? OSM_TYPE[props.osm_type] : undefined,
+      osmId: props.osm_id,
+      address: addressLine(props),
     });
   }
   return out;
@@ -71,6 +90,12 @@ function displayName(p: PhotonProps): string {
   if (p.name) return p.name;
   if (p.street) return p.housenumber ? `${p.housenumber} ${p.street}` : p.street;
   return p.city ?? p.state ?? p.country ?? '';
+}
+
+function addressLine(p: PhotonProps): string {
+  const street = p.housenumber && p.street ? `${p.housenumber} ${p.street}` : p.street;
+  const cityLine = [p.city ?? p.locality, p.state, p.postcode].filter(Boolean).join(', ');
+  return [street, cityLine].filter(Boolean).join(', ');
 }
 
 function detailLine(p: PhotonProps, name: string): string {

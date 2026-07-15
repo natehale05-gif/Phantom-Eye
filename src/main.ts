@@ -5,7 +5,8 @@ import { buildShell, buildOnboarding, el, type Shell } from './ui';
 import { Navigator, toast } from './navigation';
 import { Field } from './field';
 import { searchPlaces, type PlaceResult } from './geocode';
-import { searchNearby } from './nearby';
+import { searchNearby, fetchPlaceDetails } from './nearby';
+import { parseOpeningHours } from './hours';
 import { categoryById } from './categories';
 import { hasToken, setStoredToken, clearStoredToken, getActiveToken } from './config';
 
@@ -307,12 +308,17 @@ function wireCategories(shell: Shell, globe: Globe, nav: Navigator, field: Field
 
 // ---------- Place card (Apple-style) ----------
 
+let cardToken = 0;
+
 function showPlaceCard(shell: Shell, nav: Navigator, place: PlacePin): void {
+  const token = ++cardToken;
   const cat = categoryById(place.categoryId);
   const subtitle = place.detail || cat?.label || 'Dropped pin';
 
   const close = el('button', { class: 'place-card-close', type: 'button', innerHTML: '&times;' });
   close.addEventListener('click', () => hidePlaceCard(shell));
+
+  const info = el('div', { class: 'place-card-info' });
 
   const directions = el('button', { class: 'place-card-dir', type: 'button' }, [
     el('span', { class: 'place-card-dir-icon', innerHTML: dirIcon }),
@@ -331,11 +337,107 @@ function showPlaceCard(shell: Shell, nav: Navigator, place: PlacePin): void {
       ]),
       close,
     ]),
+    info,
     directions,
   ]);
   shell.placeCard.replaceChildren(card);
   shell.placeCard.classList.add('is-visible');
+
+  renderCardInfo(info, place);
+  void enrichPlaceCard(info, place, token);
 }
+
+/** Fill the info section (hours, phone, website, address) from what we have. */
+function renderCardInfo(info: HTMLElement, place: PlacePin): void {
+  const rows: HTMLElement[] = [];
+
+  if (place.openingHours) {
+    const { openNow, today } = parseOpeningHours(place.openingHours);
+    const value = el('span', { class: 'place-info-text' });
+    if (openNow !== null) {
+      value.append(
+        el('span', {
+          class: `place-info-state ${openNow ? 'is-open' : 'is-closed'}`,
+          textContent: openNow ? 'Open' : 'Closed',
+        }),
+      );
+      if (today) value.append(el('span', { textContent: ` · ${today}` }));
+    } else {
+      value.textContent = place.openingHours;
+    }
+    rows.push(infoRow(infoIcons.clock, value));
+  }
+
+  if (place.phone) {
+    const link = el('a', {
+      class: 'place-info-text place-info-link',
+      href: `tel:${place.phone.replace(/[^+\d]/g, '')}`,
+      textContent: place.phone,
+    });
+    rows.push(infoRow(infoIcons.phone, link));
+  }
+
+  if (place.website) {
+    const link = el('a', {
+      class: 'place-info-text place-info-link',
+      href: place.website,
+      target: '_blank',
+      rel: 'noreferrer noopener',
+      textContent: hostname(place.website),
+    });
+    rows.push(infoRow(infoIcons.web, link));
+  }
+
+  if (place.address && place.address !== place.detail) {
+    rows.push(infoRow(infoIcons.pin, el('span', { class: 'place-info-text', textContent: place.address })));
+  }
+
+  info.replaceChildren(...rows);
+}
+
+async function enrichPlaceCard(info: HTMLElement, place: PlacePin, token: number): Promise<void> {
+  const needsInfo = !place.openingHours && !place.phone && !place.website;
+  if (!needsInfo || !place.osmType || !place.osmId) return;
+  try {
+    const details = await fetchPlaceDetails(place.osmType, place.osmId);
+    if (token !== cardToken) return; // card was replaced
+    Object.assign(place, {
+      openingHours: place.openingHours ?? details.openingHours,
+      phone: place.phone ?? details.phone,
+      website: place.website ?? details.website,
+      address: place.address ?? details.address,
+    });
+    renderCardInfo(info, place);
+  } catch {
+    /* keep the basic card */
+  }
+}
+
+function infoRow(icon: string, value: Node): HTMLElement {
+  return el('div', { class: 'place-info-row' }, [
+    el('span', { class: 'place-info-icon', innerHTML: icon }),
+    value,
+  ]);
+}
+
+function hostname(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+}
+
+const infoIcons = {
+  clock:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  phone:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M6 3h3l2 5-2 1a12 12 0 0 0 5 5l1-2 5 2v3a2 2 0 0 1-2 2A16 16 0 0 1 4 5a2 2 0 0 1 2-2Z"/></svg>',
+  web:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><line x1="3" y1="12" x2="21" y2="12"/></svg>',
+  pin:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 21s-6-5.7-6-10a6 6 0 0 1 12 0c0 4.3-6 10-6 10Z"/><circle cx="12" cy="11" r="2.2"/></svg>',
+};
 
 function hidePlaceCard(shell: Shell): void {
   shell.placeCard.classList.remove('is-visible');
