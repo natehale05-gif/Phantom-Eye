@@ -9,6 +9,7 @@ name: Deploy web app to GitHub Pages
 on:
   push:
     branches:
+      - cursor/offline-maps-street-names-16d3
       - cursor/photoreal-3d-map-apple-ui-16d3
       - main
   workflow_dispatch:
