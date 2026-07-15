@@ -6,20 +6,28 @@ Phantom Eye renders the planet with **Google Photorealistic 3D Tiles** (real
 buildings **and** terrain from photogrammetry) streamed through
 [CesiumJS](https://cesium.com/platform/cesiumjs/) and your own
 [Cesium ion](https://ion.cesium.com/) key. Search anywhere on Earth, glide
-between iconic destinations, or drop into a Cesium World Terrain + OSM Buildings
-view.
+between iconic destinations, jump to your location, or get driving directions
+with turn-by-turn guidance played out across the 3D globe.
 
 ## Highlights
 
 - **Photoreal everywhere** — Google Photorealistic 3D Tiles: real geometry and
-  imagery for both terrain and buildings, in one seamless mesh.
-- **Terrain mode** — toggle to Cesium World Terrain with Cesium OSM Buildings.
+  imagery for both terrain and buildings, in one seamless mesh. No mode toggle,
+  no compromises.
+- **Turn-by-turn navigation** — search a place, tap the directions arrow, and
+  Phantom Eye draws the route on the globe, lists every maneuver with distances,
+  and flies a guided fly-through with a live turn banner.
+- **My location** — one tap to geolocate, drop a marker, and fly there.
 - **Search the planet** — Cesium ion geocoding with cinematic fly-to arrivals.
 - **Curated destinations** — hand-framed hero shots of iconic places.
 - **Apple-grade UI** — frosted glass, SF-style typography, spring animations,
   and a calm, cinematic dark scene.
 - **Bring your own key** — enter your Cesium ion token once and it's remembered
   locally, or bake it in at build time.
+
+Routing is powered by the free, rate-limited
+[OSRM](https://project-osrm.org/) demo server (no key required). Swap in a keyed
+provider in `src/routing.ts` for production traffic.
 
 ## Test it live (GitHub Pages)
 
@@ -74,7 +82,8 @@ switch keys without rebuilding.
 ## Tech
 
 - [CesiumJS](https://cesium.com/platform/cesiumjs/) + Cesium ion assets
-  (Google Photorealistic 3D Tiles, World Terrain, OSM Buildings)
+  (Google Photorealistic 3D Tiles) and ion geocoding
+- [OSRM](https://project-osrm.org/) for driving routes and turn-by-turn steps
 - [Vite](https://vitejs.dev/) + TypeScript
 
 ## Attribution

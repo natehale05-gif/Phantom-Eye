@@ -1,13 +1,9 @@
 import './style.css';
-import { Globe, type SceneMode } from './globe';
+import { Globe } from './globe';
 import { PLACES } from './places';
-import { buildShell, buildOnboarding, type Shell } from './ui';
-import {
-  hasToken,
-  setStoredToken,
-  clearStoredToken,
-  getActiveToken,
-} from './config';
+import { buildShell, buildOnboarding, el, type Shell } from './ui';
+import { Navigator } from './navigation';
+import { hasToken, setStoredToken, clearStoredToken, getActiveToken } from './config';
 
 const mount = document.getElementById('app');
 if (!mount) throw new Error('Missing #app mount point');
@@ -59,20 +55,20 @@ async function boot(root: HTMLElement): Promise<void> {
   }
 
   globe.flyWholePlanet(0);
-  wireControls(shell, globe);
+  const nav = new Navigator(shell, globe);
+  wireControls(shell, globe, nav);
 
   try {
     setLoading(shell, true, 'Loading photoreal tiles');
     await globe.initPhotoreal();
     setLoading(shell, false);
-    // Cinematic arrival at the first destination once the surface is ready.
     globe.flyToPlace(PLACES[0], 4.2);
   } catch (err) {
     handleTokenFailure(root, err);
   }
 }
 
-function wireControls(shell: Shell, globe: Globe): void {
+function wireControls(shell: Shell, globe: Globe, nav: Navigator): void {
   // Destinations
   shell.destinationsRail.addEventListener('click', (e) => {
     const card = (e.target as HTMLElement).closest<HTMLElement>('.destination-card');
@@ -87,51 +83,57 @@ function wireControls(shell: Shell, globe: Globe): void {
   // Home / whole-planet view
   shell.homeButton.addEventListener('click', () => {
     setActiveCard(shell, null);
+    if (nav.isActive) nav.end();
     globe.flyWholePlanet(2.6);
     collapseSearch(shell);
   });
 
-  // Mode toggle
-  const setMode = async (mode: SceneMode) => {
-    const isPhotoreal = mode === 'photoreal';
-    shell.modePhotoreal.classList.toggle('is-active', isPhotoreal);
-    shell.modeTerrain.classList.toggle('is-active', !isPhotoreal);
-    shell.modeThumb.style.transform = isPhotoreal ? 'translateX(0)' : 'translateX(100%)';
-    if (mode === 'terrain') setLoading(shell, true, 'Loading world terrain');
-    try {
-      await globe.setMode(mode);
-    } finally {
-      setLoading(shell, false);
-    }
-  };
-  shell.modePhotoreal.addEventListener('click', () => void setMode('photoreal'));
-  shell.modeTerrain.addEventListener('click', () => void setMode('terrain'));
+  // My location
+  shell.locateButton.addEventListener('click', () => {
+    shell.locateButton.classList.add('is-busy');
+    void nav.locate().finally(() => shell.locateButton.classList.remove('is-busy'));
+    collapseSearch(shell);
+  });
 
-  // Search
-  wireSearch(shell, globe);
+  wireSearch(shell, globe, nav);
 }
 
-function wireSearch(shell: Shell, globe: Globe): void {
+function wireSearch(shell: Shell, globe: Globe, nav: Navigator): void {
   let token = 0;
   let debounce: number | undefined;
 
-  const render = (items: { displayName: string; run: () => void }[]) => {
+  const render = (
+    items: { displayName: string; fly: () => void; directions: () => void }[],
+  ) => {
     shell.searchResults.replaceChildren();
     if (items.length === 0) {
       shell.searchResults.classList.remove('is-open');
       return;
     }
     for (const item of items) {
-      const row = document.createElement('button');
-      row.type = 'button';
-      row.className = 'search-result';
-      row.textContent = item.displayName;
-      row.addEventListener('click', () => {
-        item.run();
+      const label = el('button', {
+        class: 'search-result-main',
+        type: 'button',
+        textContent: item.displayName,
+      });
+      label.addEventListener('click', () => {
+        item.fly();
         collapseSearch(shell);
         shell.searchInput.blur();
       });
-      shell.searchResults.append(row);
+      const dir = el('button', {
+        class: 'search-result-dir',
+        type: 'button',
+        title: 'Directions',
+        innerHTML:
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 2 22 12 12 22 2 12Z"/><path d="M9 13v-2a2 2 0 0 1 2-2h4"/><path d="M13 6l3 3-3 3"/></svg>',
+      });
+      dir.addEventListener('click', () => {
+        item.directions();
+        collapseSearch(shell);
+        shell.searchInput.blur();
+      });
+      shell.searchResults.append(el('div', { class: 'search-result' }, [label, dir]));
     }
     shell.searchResults.classList.add('is-open');
   };
@@ -146,10 +148,14 @@ function wireSearch(shell: Shell, globe: Globe): void {
       const results = await globe.search(query);
       if (current !== token) return;
       render(
-        results.slice(0, 6).map((r) => ({
-          displayName: r.displayName,
-          run: () => globe.flyToDestination(r.destination),
-        })),
+        results.slice(0, 6).map((r) => {
+          const lonlat = Globe.destinationLonLat(r.destination);
+          return {
+            displayName: r.displayName,
+            fly: () => globe.flyToDestination(r.destination),
+            directions: () => void nav.directionsTo(lonlat, r.displayName),
+          };
+        }),
       );
     } catch {
       if (current === token) render([]);
