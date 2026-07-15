@@ -57,6 +57,7 @@ async function boot(root: HTMLElement): Promise<void> {
   }
 
   globe.flyWholePlanet(0);
+  if (import.meta.env.DEV) (window as unknown as { __globe: Globe }).__globe = globe;
   let field: Field;
   const nav = new Navigator(shell, globe, () => field?.lastLonLat() ?? null);
   field = new Field(shell, globe, nav);
@@ -191,7 +192,7 @@ function wireSearch(shell: Shell, globe: Globe, nav: Navigator, field: Field): v
         results.map((r) => ({
           name: r.name,
           detail: r.detail,
-          fly: () => globe.flyToLonLat(r.lon, r.lat, 520, 15, -42, 2.8),
+          fly: () => globe.showPlace(r.lon, r.lat, r.name),
           directions: () => void nav.directionsTo([r.lon, r.lat], r.name),
         })),
       );

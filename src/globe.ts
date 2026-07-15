@@ -28,10 +28,11 @@ interface LocationState {
 }
 
 const toRad = Cesium.Math.toRadians;
-const ACCENT = Cesium.Color.fromCssColorString('#0A84FF');
+const ACCENT = Cesium.Color.fromCssColorString('#0A84FF'); // "you are here" GPS dot (blue)
 const WHITE = Cesium.Color.WHITE;
 const WAYPOINT_COLOR = Cesium.Color.fromCssColorString('#FF9F0A');
 const TRACK_COLOR = Cesium.Color.fromCssColorString('#FF375F');
+const PLACE_COLOR = Cesium.Color.fromCssColorString('#FF453A'); // searched-place pin (red)
 
 export class Globe {
   readonly viewer: Cesium.Viewer;
@@ -46,6 +47,9 @@ export class Globe {
   private followActive = false;
   private followExit?: () => void;
   private onFollowChange?: (on: boolean) => void;
+
+  // Marker for the most recently searched/selected place.
+  private placeEntity?: Cesium.Entity;
 
   // Waypoints + track recording.
   private waypointEntities = new Map<string, Cesium.Entity>();
@@ -193,6 +197,58 @@ export class Globe {
       height = Cesium.Math.clamp(diag * 0.9, 600, 4_000_000);
     }
     this.flyToLonLat(lon, lat, height, 20, -35, 3.2);
+  }
+
+  // ---------- Searched-place marker ----------
+
+  /**
+   * Drop a distinct red pin on a searched/selected place and fly the camera in
+   * to look at it. The pin is a different color from the blue "you are here"
+   * GPS dot so the two never get confused.
+   */
+  showPlace(lon: number, lat: number, label: string): void {
+    this.clearPlaceMarker();
+    this.placeEntity = this.viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(lon, lat, 0),
+      point: {
+        pixelSize: 15,
+        color: PLACE_COLOR,
+        outlineColor: WHITE,
+        outlineWidth: 3,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+      label: {
+        text: label,
+        font: '600 13px -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
+        fillColor: WHITE,
+        showBackground: true,
+        backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
+        backgroundPadding: new Cesium.Cartesian2(8, 5),
+        pixelOffset: new Cesium.Cartesian2(0, -24),
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        scaleByDistance: new Cesium.NearFarScalar(300, 1, 20000, 0.55),
+      },
+    });
+    void this.refinePlaceHeight(lon, lat);
+    this.flyToLonLat(lon, lat, 520, 15, -42, 2.8);
+  }
+
+  private async refinePlaceHeight(lon: number, lat: number): Promise<void> {
+    const h = await this.sampleHeight(lon, lat);
+    if (h === null || !this.placeEntity) return;
+    this.placeEntity.position = new Cesium.ConstantPositionProperty(
+      Cesium.Cartesian3.fromDegrees(lon, lat, h),
+    );
+    this.viewer.scene.requestRender();
+  }
+
+  clearPlaceMarker(): void {
+    if (this.placeEntity) {
+      this.viewer.entities.remove(this.placeEntity);
+      this.placeEntity = undefined;
+      this.viewer.scene.requestRender();
+    }
   }
 
   /** The [lon, lat] the camera is currently centered on (best-effort). */

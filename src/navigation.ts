@@ -44,6 +44,8 @@ export class Navigator {
       this.route = route;
       this.stepIndex = 0;
       this.globe.updateLocation({ lon: origin[0], lat: origin[1] });
+      // The route draws its own start/end pins, so drop the search marker.
+      this.globe.clearPlaceMarker();
       this.globe.showRoute(route.coordinates);
       this.renderPlanning(destName, route);
       this.setState('planning');
