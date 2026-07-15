@@ -23,6 +23,7 @@ const WAYPOINTS_KEY = 'phantom-eye.waypoints';
 export class Field {
   private stopWatch?: () => void;
   private lastFix: Fix | null = null;
+  private locationListeners: ((fix: Fix) => void)[] = [];
 
   private recording = false;
   private recordStart = 0;
@@ -49,6 +50,16 @@ export class Field {
   /** Current location as a plain coordinate, for routing origins. */
   lastLonLat(): LngLat | null {
     return this.lastFix?.lonlat ?? null;
+  }
+
+  /** Subscribe to every live GPS fix (used by turn-by-turn guidance). */
+  onLocation(cb: (fix: Fix) => void): void {
+    this.locationListeners.push(cb);
+  }
+
+  /** Ensure the live GPS watch is running (e.g. when guidance starts). */
+  startTracking(): void {
+    this.ensureWatching();
   }
 
   // ---------- Live location + follow ----------
@@ -97,7 +108,10 @@ export class Field {
     this.applyFix(fix);
     this.shell.menuLocate.classList.remove('is-busy');
 
-    if (first) this.globe.setFollow(true);
+    // Don't grab the camera into follow mode while turn-by-turn is driving it.
+    if (first && !this.nav.isActive) this.globe.setFollow(true);
+
+    for (const cb of this.locationListeners) cb(fix);
 
     if (this.recording) {
       void this.globe.pushTrackPoint(fix.lonlat[0], fix.lonlat[1]);

@@ -1,8 +1,8 @@
 import { Globe } from './globe';
 import type { Shell } from './ui';
 import { el, maneuverIcon } from './ui';
-import type { LngLat } from './geo';
-import { getFix } from './geoloc';
+import { bearingDeg, type LngLat } from './geo';
+import { getFix, type Fix } from './geoloc';
 import {
   fetchRoute,
   formatDistance,
@@ -19,10 +19,18 @@ export class Navigator {
   private route?: Route;
   private stepIndex = 0;
 
+  // Route geometry for GPS-driven progress along the path.
+  private coords: LngLat[] = [];
+  private cum: number[] = [];
+  private stepAlong: number[] = [];
+  private total = 0;
+  private arrived = false;
+
   constructor(
     private readonly shell: Shell,
     private readonly globe: Globe,
     private readonly originProvider?: () => LngLat | null,
+    private readonly requestTracking?: () => void,
   ) {}
 
   get isActive(): boolean {
@@ -43,6 +51,11 @@ export class Navigator {
       const route = await fetchRoute(origin, destination, 'driving');
       this.route = route;
       this.stepIndex = 0;
+      this.arrived = false;
+      this.coords = route.coordinates;
+      this.cum = cumulative(route.coordinates);
+      this.total = this.cum[this.cum.length - 1] || route.distance;
+      this.stepAlong = route.steps.map((s) => projectOnRoute(s.location, this.coords, this.cum).along);
       this.globe.updateLocation({ lon: origin[0], lat: origin[1] });
       // The route draws its own start/end pins, so drop the search markers.
       this.globe.clearPlaces();
@@ -103,10 +116,41 @@ export class Navigator {
     this.shell.navPanel.classList.remove('is-visible');
     this.renderGuidance();
     this.renderTripBar();
-    this.globe.startDrive(
-      (lonlat, remaining) => this.updateGuidance(lonlat, remaining),
-      () => this.arrive(),
-    );
+
+    // Follow the *real* GPS position from behind, Apple-Maps style.
+    this.requestTracking?.();
+    this.globe.beginNavigation();
+    const start = this.originProvider?.() ?? this.coords[0];
+    if (start) this.advance(start, true);
+  }
+
+  /** Called on every live GPS fix while guiding. */
+  onLocation(fix: Fix): void {
+    if (this.state === 'guiding') this.advance(fix.lonlat, false);
+  }
+
+  /**
+   * Advance guidance to the current position: pick the upcoming maneuver, update
+   * the banner + trip bar from real progress, and chase the camera along the
+   * road ahead.
+   */
+  private advance(pos: LngLat, smoothCam: boolean): void {
+    if (!this.route) return;
+    const { along, bearing } = projectOnRoute(pos, this.coords, this.cum);
+
+    let up = this.stepAlong.findIndex((sa, i) => i > 0 && sa > along + 2);
+    if (up < 0) up = this.route.steps.length - 1;
+    this.stepIndex = up;
+
+    this.updateGuidanceContent(Math.max(0, this.stepAlong[up] - along));
+    const remaining = Math.max(0, this.total - along);
+    this.updateTripBar(remaining);
+    this.globe.updateNavCamera(bearing, smoothCam);
+
+    if (remaining < 25 && !this.arrived) {
+      this.arrived = true;
+      this.arrive();
+    }
   }
 
   private renderGuidance(): void {
@@ -138,19 +182,6 @@ export class Navigator {
     this.shell.tripBar.replaceChildren(inner);
     this.shell.tripBar.classList.add('is-visible');
     if (this.route) this.updateTripBar(this.route.distance);
-  }
-
-  private updateGuidance(current: LngLat, remaining: number): void {
-    if (!this.route) return;
-    while (
-      this.stepIndex < this.route.steps.length - 1 &&
-      haversine(current, this.route.steps[this.stepIndex].location) < 30
-    ) {
-      this.stepIndex++;
-    }
-    const step = this.route.steps[this.stepIndex];
-    this.updateGuidanceContent(haversine(current, step.location));
-    this.updateTripBar(remaining);
   }
 
   private updateGuidanceContent(distanceOverride?: number): void {
@@ -203,6 +234,7 @@ export class Navigator {
   }
 
   end(): void {
+    this.globe.endNavigation();
     this.globe.clearRoute();
     this.route = undefined;
     this.stepIndex = 0;
@@ -229,6 +261,50 @@ export class Navigator {
   private toast(message: string, ms = 2600): void {
     toast(this.shell, message, ms);
   }
+}
+
+/** Cumulative along-route distance (meters) for each coordinate. */
+function cumulative(coords: LngLat[]): number[] {
+  const cum = [0];
+  for (let i = 1; i < coords.length; i++) cum.push(cum[i - 1] + haversine(coords[i - 1], coords[i]));
+  return cum;
+}
+
+/**
+ * Project a point onto the route: returns how far along the route it is
+ * (meters) and the heading of the road there. Uses a local equirectangular
+ * approximation, which is accurate over the short spans between vertices.
+ */
+function projectOnRoute(
+  pos: LngLat,
+  coords: LngLat[],
+  cum: number[],
+): { along: number; bearing: number } {
+  if (coords.length < 2) return { along: 0, bearing: 0 };
+  const kx = Math.cos((pos[1] * Math.PI) / 180);
+  const xy = (p: LngLat): [number, number] => [(p[0] - pos[0]) * kx, p[1] - pos[1]];
+
+  let best = Infinity;
+  let bestAlong = cum[cum.length - 1];
+  let bestSeg = coords.length - 2;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const [ax, ay] = xy(coords[i]);
+    const [bx, by] = xy(coords[i + 1]);
+    const abx = bx - ax;
+    const aby = by - ay;
+    const len2 = abx * abx + aby * aby || 1e-12;
+    let t = -(ax * abx + ay * aby) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const cx = ax + abx * t;
+    const cy = ay + aby * t;
+    const d2 = cx * cx + cy * cy;
+    if (d2 < best) {
+      best = d2;
+      bestSeg = i;
+      bestAlong = cum[i] + t * (cum[i + 1] - cum[i]);
+    }
+  }
+  return { along: bestAlong, bearing: bearingDeg(coords[bestSeg], coords[bestSeg + 1]) };
 }
 
 /** Clock time of arrival, e.g. "3:45 PM", given seconds remaining. */

@@ -56,6 +56,7 @@ export class Globe {
   private followActive = false;
   private followExit?: () => void;
   private onFollowChange?: (on: boolean) => void;
+  private navigating = false;
 
   // Dropped place pins (search results / nearby categories).
   private placeMarkers: { entity: Cesium.Entity; place: PlacePin }[] = [];
@@ -249,11 +250,26 @@ export class Globe {
       position: Cesium.Cartesian3.fromDegrees(place.lon, place.lat, 0),
       billboard: {
         image,
-        width: 34,
-        height: 44,
+        width: 42,
+        height: 54,
         verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        scaleByDistance: new Cesium.NearFarScalar(200, 1, 40000, 0.5),
+        scaleByDistance: new Cesium.NearFarScalar(200, 1, 45000, 0.55),
+      },
+      label: {
+        text: place.name,
+        font: '600 14px -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
+        fillColor: WHITE,
+        showBackground: true,
+        backgroundColor: new Cesium.Color(0, 0, 0, 0.66),
+        backgroundPadding: new Cesium.Cartesian2(9, 6),
+        pixelOffset: new Cesium.Cartesian2(0, -58),
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        scaleByDistance: new Cesium.NearFarScalar(200, 1, 12000, 0.65),
+        translucencyByDistance: new Cesium.NearFarScalar(9000, 1, 16000, 0),
+        style: Cesium.LabelStyle.FILL,
       },
     });
     this.placeMarkers.push({ entity, place });
@@ -481,6 +497,49 @@ export class Globe {
         easingFunction: Cesium.EasingFunction.QUINTIC_IN_OUT,
       });
     }
+  }
+
+  // ---------- Navigation chase camera ----------
+
+  beginNavigation(): void {
+    this.navigating = true;
+    this.setFollow(false);
+  }
+
+  endNavigation(): void {
+    this.navigating = false;
+  }
+
+  isNavigating(): boolean {
+    return this.navigating;
+  }
+
+  /**
+   * Turn-by-turn chase camera: sit just behind and above the live GPS position,
+   * looking along the direction of travel (`courseDeg`) — the Apple Maps 3D
+   * driving view. Called on every GPS fix while guiding.
+   */
+  updateNavCamera(courseDeg: number, smooth = false): void {
+    const s = this.locationState;
+    if (!s) return;
+    const hRad = toRad(courseDeg);
+    const frame = Cesium.Transforms.eastNorthUpToFixedFrame(s.position);
+    const back = 95;
+    const up = 52;
+    const local = new Cesium.Cartesian3(-Math.sin(hRad) * back, -Math.cos(hRad) * back, up);
+    const camPos = Cesium.Matrix4.multiplyByPoint(frame, local, new Cesium.Cartesian3());
+    const orientation = { heading: hRad, pitch: toRad(-22), roll: 0 };
+    if (smooth) {
+      this.viewer.camera.flyTo({
+        destination: camPos,
+        orientation,
+        duration: 1.2,
+        easingFunction: Cesium.EasingFunction.QUINTIC_IN_OUT,
+      });
+    } else {
+      this.viewer.camera.setView({ destination: camPos, orientation });
+    }
+    this.viewer.scene.requestRender();
   }
 
   // ---------- Waypoints ----------

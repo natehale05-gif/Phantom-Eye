@@ -61,8 +61,15 @@ async function boot(root: HTMLElement): Promise<void> {
   globe.flyWholePlanet(0);
   if (import.meta.env.DEV) (window as unknown as { __globe: Globe }).__globe = globe;
   let field: Field;
-  const nav = new Navigator(shell, globe, () => field?.lastLonLat() ?? null);
+  const nav = new Navigator(
+    shell,
+    globe,
+    () => field?.lastLonLat() ?? null,
+    () => field?.startTracking(),
+  );
+  if (import.meta.env.DEV) (window as unknown as { __nav: Navigator }).__nav = nav;
   field = new Field(shell, globe, nav);
+  field.onLocation((fix) => nav.onLocation(fix));
   wireControls(shell, globe, nav, field);
 
   // Request the GPS fix immediately, in parallel with tile streaming, so the
