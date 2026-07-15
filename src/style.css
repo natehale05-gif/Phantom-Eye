@@ -819,6 +819,7 @@ button {
   font-size: 13.5px;
   color: var(--accent);
   font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 .nav-close {
   flex: none;
@@ -893,6 +894,7 @@ button {
   font-size: 16px;
   font-weight: 700;
   color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
 .nav-alt-dist {
   font-size: 13.5px;
@@ -1280,6 +1282,17 @@ button {
   flex-direction: column;
   align-items: center;
   gap: 12px;
+  transition: opacity 0.3s var(--ease), transform 0.3s var(--spring);
+}
+/* Keep the map controls out of the way while a bottom sheet is open. */
+.app-shell:has(.place-card-wrap.is-visible) .controls,
+.app-shell:has(.nav-panel.is-visible) .controls {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(10px);
+}
+.ctrl-compass svg {
+  transform-origin: 50% 50%;
 }
 .ctrl-btn {
   width: 44px;
