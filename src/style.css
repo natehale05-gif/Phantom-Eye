@@ -209,6 +209,7 @@ button {
 .search-bar {
   position: relative;
   flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -235,6 +236,7 @@ button {
 }
 .search-input {
   flex: 1;
+  min-width: 0;
   background: none;
   border: none;
   outline: none;
@@ -400,6 +402,7 @@ button {
   display: none;
   flex-direction: column;
   min-width: 232px;
+  max-width: calc(100vw - 28px);
   padding: 8px;
   border-radius: 18px;
 }
@@ -1766,6 +1769,54 @@ button {
   }
   .credit-container {
     max-width: 60vw;
+  }
+}
+
+/* Phones: keep the search row, weather chip, and tools menu on-screen. */
+@media (max-width: 480px) {
+  .top-bar {
+    padding: 0 10px;
+    gap: 10px;
+  }
+  .search-row {
+    gap: 8px;
+  }
+  .search-bar {
+    height: 44px;
+    padding: 0 13px;
+    gap: 8px;
+  }
+  .search-input {
+    font-size: 14px;
+  }
+  .weather-chip {
+    height: 44px;
+    padding: 0 11px 0 9px;
+    gap: 5px;
+  }
+  .weather-chip-icon {
+    width: 20px;
+    height: 20px;
+  }
+  .weather-chip-temp {
+    font-size: 14px;
+  }
+  .menu-button {
+    width: 44px;
+    height: 44px;
+  }
+  .menu {
+    min-width: 208px;
+  }
+}
+
+/* Very narrow phones: drop the temperature label so the row fits. */
+@media (max-width: 360px) {
+  .weather-chip {
+    padding: 0 10px;
+  }
+  .weather-chip-temp {
+    display: none;
   }
 }
 
