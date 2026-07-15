@@ -153,6 +153,11 @@ function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field):
     globe.setStreetLabels(on);
     shell.menuLabels.classList.toggle('is-active', on);
   };
+  // Feedback when street names can't be sourced (Overpass empty/unreachable).
+  globe.onStreetLabelStatus((status) => {
+    if (status === 'empty') toast(shell, 'No street names for this area yet');
+    else if (status === 'error') toast(shell, "Couldn't load street names — check your connection");
+  });
   applyLabels(labelsOn);
   shell.menuLabels.addEventListener('click', () => {
     const next = !shell.menuLabels.classList.contains('is-active');

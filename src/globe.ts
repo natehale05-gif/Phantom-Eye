@@ -132,6 +132,11 @@ export class Globe {
     this.streetLabels?.setEnabled(on);
   }
 
+  /** Report street-label load state (loading/done/empty/error) to the UI. */
+  onStreetLabelStatus(cb: (status: 'loading' | 'done' | 'empty' | 'error') => void): void {
+    this.streetLabels?.onStatus(cb);
+  }
+
   /** Toggle a trail overlay (offroad / hiking / bike), coloured by difficulty. */
   setTrailLayer(id: TrailLayerId, on: boolean): void {
     this.trails?.setEnabled(id, on);

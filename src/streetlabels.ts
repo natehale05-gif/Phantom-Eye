@@ -35,8 +35,9 @@ export class StreetLabels {
   private enabled = true;
   private debounce?: number;
   private token = 0;
-  private drawGen = 0;
   private lastKey = '';
+  private announce = false;
+  private statusHandler?: (status: 'loading' | 'done' | 'empty' | 'error') => void;
   private readonly cache = new Map<string, { lon: number; lat: number; text: string; kind: 'road' | 'place' }[]>();
 
   constructor(private readonly viewer: Cesium.Viewer) {
@@ -48,9 +49,15 @@ export class StreetLabels {
     );
   }
 
+  /** Report load state (loading/done/empty/error) after the user enables labels. */
+  onStatus(cb: (status: 'loading' | 'done' | 'empty' | 'error') => void): void {
+    this.statusHandler = cb;
+  }
+
   setEnabled(on: boolean): void {
     this.enabled = on;
     if (on) {
+      this.announce = true; // surface the outcome of this (re)enable to the user
       if (!this.removeListener) {
         this.removeListener = this.viewer.camera.changed.addEventListener(() => this.schedule());
         this.viewer.camera.percentageChanged = 0.25;
@@ -106,13 +113,25 @@ export class StreetLabels {
     const current = ++this.token;
     let items = this.cache.get(key);
     if (!items) {
+      if (this.announce) this.statusHandler?.('loading');
       const fetched = await this.fetchLabels(s, w, n, e);
       if (current !== this.token) return;
-      if (!fetched) return;
+      if (!fetched) {
+        this.lastKey = '';
+        if (this.announce) {
+          this.announce = false;
+          this.statusHandler?.('error');
+        }
+        return;
+      }
       items = fetched;
       this.cache.set(key, items);
     }
     this.draw(items);
+    if (this.announce) {
+      this.announce = false;
+      this.statusHandler?.(items.length ? 'done' : 'empty');
+    }
   }
 
   private async fetchLabels(
@@ -173,16 +192,9 @@ export class StreetLabels {
 
   private draw(items: { lon: number; lat: number; text: string; kind: 'road' | 'place' }[]): void {
     this.collection.removeAll();
-    const gen = ++this.drawGen;
-    const labels: Cesium.Label[] = [];
     for (const it of items) {
       const place = it.kind === 'place';
-      const label = this.collection.add({
-        // Placed at sea level first, then lifted onto the real photoreal
-        // surface by clampToSurface(). We deliberately do NOT use
-        // CLAMP_TO_GROUND here: with Google 3D Tiles the ground reference is the
-        // ellipsoid (sea level), which sits far below the tiles, so clamped
-        // labels appear buried under the map.
+      this.collection.add({
         position: Cesium.Cartesian3.fromDegrees(it.lon, it.lat, 0),
         text: it.text,
         font: place
@@ -194,40 +206,15 @@ export class StreetLabels {
         style: Cesium.LabelStyle.FILL_AND_OUTLINE,
         verticalOrigin: Cesium.VerticalOrigin.CENTER,
         horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+        // Clamp directly to the photoreal 3D tiles so names sit on the road.
+        // CLAMP_TO_GROUND would snap to the ellipsoid (sea level), which is far
+        // below the tiles, burying the labels; CLAMP_TO_3D_TILE tracks the real
+        // surface every frame with no manual height sampling.
+        heightReference: Cesium.HeightReference.CLAMP_TO_3D_TILE,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
         scaleByDistance: new Cesium.NearFarScalar(200, 1, 3000, place ? 0.75 : 0.55),
         translucencyByDistance: new Cesium.NearFarScalar(1800, 1, 3000, 0),
       });
-      labels.push(label);
-    }
-    this.viewer.scene.requestRender();
-    void this.clampToSurface(gen, items, labels);
-  }
-
-  /**
-   * Lift each label onto the photoreal 3D surface by sampling the real tile
-   * height at its position, so names sit on the road instead of underground.
-   */
-  private async clampToSurface(
-    gen: number,
-    items: { lon: number; lat: number }[],
-    labels: Cesium.Label[],
-  ): Promise<void> {
-    if (labels.length === 0) return;
-    const flat = items.map((it) => Cesium.Cartesian3.fromDegrees(it.lon, it.lat, 0));
-    let clamped: (Cesium.Cartesian3 | undefined)[];
-    try {
-      clamped = await this.viewer.scene.clampToHeightMostDetailed(flat);
-    } catch {
-      return;
-    }
-    if (gen !== this.drawGen) return; // superseded by a newer draw
-    for (let i = 0; i < labels.length; i++) {
-      const c = clamped[i];
-      if (!c) continue;
-      const h = Cesium.Cartographic.fromCartesian(c).height;
-      if (!isFinite(h)) continue;
-      labels[i].position = Cesium.Cartesian3.fromDegrees(items[i].lon, items[i].lat, h + 2);
     }
     this.viewer.scene.requestRender();
   }

@@ -254,71 +254,24 @@ export class TrailLayers {
 
   private draw(layer: LayerState, ways: TrailWay[]): void {
     layer.ds.entities.removeAll();
-    const gen = layer.token;
-    const entries: { entity: Cesium.Entity; coords: number[] }[] = [];
+    // Drape lines directly onto the photoreal 3D tiles via GPU ground-clamping
+    // (classify onto both terrain and 3D tiles). This tracks the real surface
+    // every frame with no per-vertex height sampling, so it stays on the road
+    // and doesn't bog the app down as the camera moves.
+    const clamp = Cesium.GroundPolylinePrimitive.isSupported(this.viewer.scene);
     for (const way of ways) {
       const color = DIFFICULTY[way.grade];
-      const entity = layer.ds.entities.add({
+      layer.ds.entities.add({
         polyline: {
-          // Start slightly above the ellipsoid; corrected to the true surface
-          // height once sampling completes (see clampToSurface).
           positions: Cesium.Cartesian3.fromDegreesArray(way.coords),
           width: 5,
-          material: color,
-          // Draw a faint version through the terrain so the trail stays legible
-          // even where the 3D buildings/hills would otherwise occlude it.
-          depthFailMaterial: new Cesium.ColorMaterialProperty(color.withAlpha(0.55)),
+          material: new Cesium.ColorMaterialProperty(color),
+          clampToGround: clamp,
+          classificationType: clamp ? Cesium.ClassificationType.BOTH : undefined,
+          // Fallback (unsupported GPU): show through terrain so it's still visible.
+          depthFailMaterial: clamp ? undefined : new Cesium.ColorMaterialProperty(color.withAlpha(0.6)),
         },
       });
-      entries.push({ entity, coords: way.coords });
-    }
-    this.viewer.scene.requestRender();
-    void this.clampToSurface(layer, gen, entries);
-  }
-
-  /**
-   * Drape trail lines onto the photoreal 3D tiles by sampling the real surface
-   * height at every vertex in one batch, then repositioning each polyline.
-   */
-  private async clampToSurface(
-    layer: LayerState,
-    gen: number,
-    entries: { entity: Cesium.Entity; coords: number[] }[],
-  ): Promise<void> {
-    const flat: Cesium.Cartesian3[] = [];
-    const counts: number[] = [];
-    for (const e of entries) {
-      const n = e.coords.length / 2;
-      counts.push(n);
-      for (let i = 0; i < n; i++) {
-        flat.push(Cesium.Cartesian3.fromDegrees(e.coords[i * 2], e.coords[i * 2 + 1], 0));
-      }
-    }
-    if (flat.length === 0) return;
-    let clamped: (Cesium.Cartesian3 | undefined)[];
-    try {
-      clamped = await this.viewer.scene.clampToHeightMostDetailed(flat);
-    } catch {
-      return;
-    }
-    // Bail out if this layer was refreshed/disabled while we were sampling.
-    if (gen !== layer.token || !layer.enabled) return;
-    let k = 0;
-    for (let ei = 0; ei < entries.length; ei++) {
-      const e = entries[ei];
-      const positions: Cesium.Cartesian3[] = [];
-      for (let i = 0; i < counts[ei]; i++) {
-        const c = clamped[k++];
-        const lon = e.coords[i * 2];
-        const lat = e.coords[i * 2 + 1];
-        let h = 0;
-        if (c) {
-          const hh = Cesium.Cartographic.fromCartesian(c).height;
-          if (isFinite(hh)) h = hh;
-        }
-        positions.push(Cesium.Cartesian3.fromDegrees(lon, lat, h + 1.5));
-      }
-      if (e.entity.polyline) e.entity.polyline.positions = new Cesium.ConstantProperty(positions);
     }
     this.viewer.scene.requestRender();
   }

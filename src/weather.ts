@@ -246,15 +246,50 @@ export async function fetchMarine(lat: number, lon: number): Promise<MarineData>
   };
 }
 
-/** Reverse-geocode a friendly place name (city/region), keyless via BigDataCloud. */
+/**
+ * Reverse-geocode a friendly place name (city/town). Photon (OSM) is tried
+ * first because it returns the actual town — BigDataCloud's `city` field snaps
+ * to a broader administrative city (e.g. it reports "Albany" for Corvallis),
+ * so it's used only as a fallback and we prefer its granular `locality`.
+ */
 export async function reverseName(lat: number, lon: number): Promise<string> {
+  const PLACE_TYPES = new Set([
+    'city',
+    'town',
+    'village',
+    'hamlet',
+    'municipality',
+    'locality',
+    'suburb',
+    'neighbourhood',
+  ]);
+  try {
+    const res = await fetch(`https://photon.komoot.io/reverse?lon=${lon}&lat=${lat}`);
+    if (res.ok) {
+      const d = await res.json();
+      const p = d?.features?.[0]?.properties as
+        | { name?: string; city?: string; county?: string; state?: string; type?: string }
+        | undefined;
+      if (p) {
+        const name =
+          p.city ||
+          (p.type && PLACE_TYPES.has(p.type) ? p.name : undefined) ||
+          p.name ||
+          p.county ||
+          p.state;
+        if (name) return name;
+      }
+    }
+  } catch {
+    /* fall through to BigDataCloud */
+  }
   try {
     const res = await fetch(
       `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`,
     );
     if (!res.ok) throw new Error('rev');
     const d = await res.json();
-    return d.city || d.locality || d.principalSubdivision || d.countryName || 'Current Location';
+    return d.locality || d.city || d.principalSubdivision || d.countryName || 'Current Location';
   } catch {
     return 'Current Location';
   }
