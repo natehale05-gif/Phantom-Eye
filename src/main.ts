@@ -231,6 +231,7 @@ function wireSearch(shell: Shell, globe: Globe, nav: Navigator, field: Field): v
       collapseSearch(shell);
       return;
     }
+    for (const c of shell.categories.querySelectorAll('.chip')) c.classList.remove('is-active');
     renderLoading(); // instant feedback while the query is in flight
     debounce = window.setTimeout(() => void run(value), 180);
   });

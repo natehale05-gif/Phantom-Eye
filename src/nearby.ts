@@ -10,7 +10,13 @@ import { haversine } from './routing';
  * exactly what the category chips need — just like Apple Maps' nearby search.
  */
 
-const ENDPOINT = 'https://overpass-api.de/api/interpreter';
+// The public Overpass instances are rate-limited and occasionally busy, so we
+// try a few well-known mirrors in turn before giving up.
+const ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+];
 const RADIUS_M = 3000;
 const MAX_RESULTS = 18;
 
@@ -32,21 +38,7 @@ export async function searchNearby(cat: Category, near: LngLat): Promise<PlaceRe
     )
     .join('');
   const query = `[out:json][timeout:20];(${clauses});out center ${MAX_RESULTS * 3};`;
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
-  let data: { elements?: OverpassElement[] };
-  try {
-    const res = await fetch(ENDPOINT, {
-      method: 'POST',
-      body: `data=${encodeURIComponent(query)}`,
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`Nearby search failed (${res.status})`);
-    data = await res.json();
-  } finally {
-    clearTimeout(timer);
-  }
+  const data = await fetchOverpass(query);
 
   const out: PlaceResult[] = [];
   const seen = new Set<string>();
@@ -71,6 +63,28 @@ export async function searchNearby(cat: Category, near: LngLat): Promise<PlaceRe
 
   out.sort((a, b) => haversine(near, [a.lon, a.lat]) - haversine(near, [b.lon, b.lat]));
   return out.slice(0, MAX_RESULTS);
+}
+
+async function fetchOverpass(query: string): Promise<{ elements?: OverpassElement[] }> {
+  let lastErr: unknown;
+  for (const endpoint of ENDPOINTS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        body: `data=${encodeURIComponent(query)}`,
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`Nearby search failed (${res.status})`);
+      return await res.json();
+    } catch (err) {
+      lastErr = err;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('Nearby search failed');
 }
 
 function detailLine(tags: Record<string, string>): string {

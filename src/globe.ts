@@ -165,6 +165,7 @@ export class Globe {
 
   flyToPlace(place: Place, duration = 3.4): void {
     this.cancelDrive();
+    this.setFollow(false);
     this.viewer.camera.flyTo({
       destination: Cesium.Cartesian3.fromDegrees(place.lon, place.lat, place.height),
       orientation: { heading: toRad(place.heading), pitch: toRad(place.pitch), roll: 0 },
@@ -176,6 +177,7 @@ export class Globe {
   /** Frame the whole planet. Duration 0 snaps instantly (used on boot). */
   flyWholePlanet(duration = 0): void {
     this.cancelDrive();
+    this.setFollow(false);
     this.viewer.camera.flyTo({
       destination: Cesium.Cartesian3.fromDegrees(-30, 25, 24_000_000),
       orientation: { heading: 0, pitch: toRad(-90), roll: 0 },
@@ -186,6 +188,7 @@ export class Globe {
 
   flyToLonLat(lon: number, lat: number, height = 1200, heading = 0, pitch = -35, duration = 3): void {
     this.cancelDrive();
+    this.setFollow(false);
     this.viewer.camera.flyTo({
       destination: Cesium.Cartesian3.fromDegrees(lon, lat, height),
       orientation: { heading: toRad(heading), pitch: toRad(pitch), roll: 0 },
@@ -273,6 +276,7 @@ export class Globe {
   /** Fit the camera to see all currently dropped pins. */
   framePlaces(): void {
     this.cancelDrive();
+    this.setFollow(false);
     if (this.placeMarkers.length === 0) return;
     if (this.placeMarkers.length === 1) {
       this.focusPlace(this.placeMarkers[0].place);
@@ -604,6 +608,7 @@ export class Globe {
   /** Fit the camera to see the whole route. */
   frameRoute(): void {
     this.cancelDrive();
+    this.setFollow(false);
     if (this.routeEntities.length === 0) return;
     this.viewer.flyTo(this.routeEntities, {
       duration: 2.2,
