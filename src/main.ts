@@ -9,6 +9,9 @@ import { searchNearby, fetchPlaceDetails } from './nearby';
 import { formatDistance, haversine } from './routing';
 import { parseOpeningHours } from './hours';
 import { categoryById } from './categories';
+import { WeatherPage } from './weatherpage';
+import { fetchCurrentBrief, wmo } from './weather';
+import { weatherIcon } from './weathericons';
 import { hasToken, setStoredToken, clearStoredToken, getActiveToken } from './config';
 
 const mount = document.getElementById('app');
@@ -72,7 +75,9 @@ async function boot(root: HTMLElement): Promise<void> {
   if (import.meta.env.DEV) (window as unknown as { __nav: Navigator }).__nav = nav;
   field = new Field(shell, globe, nav);
   field.onLocation((fix) => nav.onLocation(fix));
+  weather = new WeatherPage(shell.weatherPage);
   wireControls(shell, globe, nav, field);
+  wireWeather(shell, globe, field);
 
   // Request the GPS fix immediately, in parallel with tile streaming, so the
   // camera can fly to (and follow) the user the moment both are ready — the
@@ -85,6 +90,8 @@ async function boot(root: HTMLElement): Promise<void> {
     setLoading(shell, false);
     const located = await locating;
     if (!located) globe.flyToPlace(PLACES[0], 4.2);
+    const at = field.lastLonLat();
+    if (at) void updateWeatherChip(shell, at[1], at[0]);
   } catch (err) {
     handleTokenFailure(root, err);
   }
@@ -136,6 +143,42 @@ function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field):
   wireSearch(shell, globe, nav, field);
   wireCategories(shell, globe, nav, field);
   wireMapControls(shell, globe, field);
+}
+
+let weather: WeatherPage | null = null;
+let chipToken = 0;
+let lastChipAt = 0;
+
+function wireWeather(shell: Shell, globe: Globe, field: Field): void {
+  shell.weatherChip.addEventListener('click', () => {
+    const at = field.lastLonLat() ?? globe.cameraCenterLonLat();
+    if (!at) {
+      toast(shell, 'Finding your location for weather…');
+      return;
+    }
+    void weather?.open(at[1], at[0]);
+  });
+
+  // Refresh the at-a-glance chip from live location (throttled — weather is slow-moving).
+  field.onLocation((fix) => {
+    if (Date.now() - lastChipAt < 15 * 60 * 1000) return;
+    void updateWeatherChip(shell, fix.lonlat[1], fix.lonlat[0]);
+  });
+}
+
+async function updateWeatherChip(shell: Shell, lat: number, lon: number): Promise<void> {
+  const current = ++chipToken;
+  lastChipAt = Date.now();
+  try {
+    const brief = await fetchCurrentBrief(lat, lon);
+    if (current !== chipToken) return;
+    const icon = shell.weatherChip.querySelector('.weather-chip-icon');
+    const temp = shell.weatherChip.querySelector('.weather-chip-temp');
+    if (icon) icon.innerHTML = weatherIcon(wmo(brief.code, brief.isDay).icon);
+    if (temp) temp.textContent = `${Math.round(brief.temp)}°`;
+  } catch {
+    lastChipAt = 0; // allow a retry on the next fix
+  }
 }
 
 function wireMapControls(shell: Shell, globe: Globe, field: Field): void {
@@ -440,7 +483,16 @@ function showPlaceCard(shell: Shell, nav: Navigator, field: Field, place: PlaceP
     favorite.classList.add('is-done');
   });
   const share = actionButton(cardIcons.share, 'Share', () => sharePlace(shell, place));
-  const actions = el('div', { class: 'place-card-actions' }, [directions, favorite, share]);
+  const acts = [directions, favorite, share];
+  if (place.categoryId === 'surf') {
+    acts.push(
+      actionButton(cardIcons.surf, 'Surf', () => {
+        hidePlaceCard(shell);
+        void weather?.open(place.lat, place.lon, place.name, 'surf');
+      }),
+    );
+  }
+  const actions = el('div', { class: 'place-card-actions' }, acts);
 
   const card = el('div', { class: 'place-card glass' }, [
     el('div', { class: 'place-card-head' }, [
@@ -489,6 +541,8 @@ const cardIcons = {
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 17l-5.2 2.7 1-5.9-4.3-4.1 5.9-.8Z"/></svg>',
   share:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4"/><path d="M8 8l4-4 4 4"/><path d="M6 12v6a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-6"/></svg>',
+  surf:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16c4 0 4-2 8-2s4 2 8 2"/><path d="M3 20c4 0 4-2 8-2s4 2 8 2"/><path d="M14 4c3 3 3 7 0 10"/></svg>',
 };
 
 /** Fill the info section (hours, phone, website, address) from what we have. */

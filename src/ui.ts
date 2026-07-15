@@ -25,6 +25,8 @@ export interface Shell {
   creditContainer: HTMLElement;
   searchInput: HTMLInputElement;
   searchResults: HTMLElement;
+  weatherChip: HTMLButtonElement;
+  weatherPage: HTMLElement;
   menuButton: HTMLButtonElement;
   menu: HTMLElement;
   menuLocate: HTMLButtonElement;
@@ -96,7 +98,17 @@ export function buildShell(mount: HTMLElement): Shell {
   });
   const menuWrap = el('div', { class: 'menu-wrap' }, [menuButton, menu]);
 
-  const searchRow = el('div', { class: 'search-row' }, [searchBar, menuWrap]);
+  // --- Weather chip (at-a-glance, left of the search bar) ---
+  const weatherChip = el('button', {
+    class: 'weather-chip glass',
+    type: 'button',
+    title: 'Weather',
+  }, [
+    el('span', { class: 'weather-chip-icon', innerHTML: icons.weather }),
+    el('span', { class: 'weather-chip-temp', textContent: '--°' }),
+  ]) as HTMLButtonElement;
+
+  const searchRow = el('div', { class: 'search-row' }, [weatherChip, searchBar, menuWrap]);
 
   // --- Category chips (Find nearby: Food, Groceries, Hotels, …) ---
   const categories = el(
@@ -123,6 +135,7 @@ export function buildShell(mount: HTMLElement): Shell {
   // --- Bottom sheets + guidance banner + HUD (filled dynamically) ---
   const navPanel = el('div', { class: 'nav-panel' });
   const waypointsPanel = el('div', { class: 'nav-panel' });
+  const weatherPage = el('div', { class: 'weather-page' });
   const placeCard = el('div', { class: 'place-card-wrap' });
   const guidance = el('div', { class: 'guidance' });
   const tripBar = el('div', { class: 'trip-bar' });
@@ -156,6 +169,7 @@ export function buildShell(mount: HTMLElement): Shell {
     topBar,
     navPanel,
     waypointsPanel,
+    weatherPage,
     placeCard,
     guidance,
     tripBar,
@@ -173,6 +187,8 @@ export function buildShell(mount: HTMLElement): Shell {
     creditContainer,
     searchInput,
     searchResults,
+    weatherChip,
+    weatherPage,
     menuButton,
     menu,
     menuLocate,
@@ -276,6 +292,8 @@ const icons = {
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 3 21 8v8l-9 5-9-5V8Z"/><path d="M12 3v9m0 0 9-4m-9 4-9-4"/></svg>`,
   share:
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4"/><path d="M8 8l4-4 4 4"/><path d="M6 12v6a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-6"/></svg>`,
+  weather:
+    `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="9" cy="9" r="4" fill="#FFCC00"/><path d="M11 18a4.2 4.2 0 0 1 .5-8.4A5.4 5.4 0 0 1 21.7 11 3.9 3.9 0 0 1 21 18H11Z" fill="#D7DCE5"/></svg>`,
   star:
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 17l-5.2 2.7 1-5.9-4.3-4.1 5.9-.8Z"/></svg>`,
   clock:

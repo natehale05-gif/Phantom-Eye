@@ -96,6 +96,50 @@ export const CATEGORIES: Category[] = [
       ['amenity', 'pub'],
     ],
   },
+  {
+    id: 'surf',
+    label: 'Surf',
+    color: '#00C7BE',
+    glyph: '<path d="M3 17c4 0 4-2 8-2s4 2 8 2"/><path d="M3 21c4 0 4-2 8-2s4 2 8 2"/><path d="M14 4c3 3 3 7 0 11"/>',
+    osm: [
+      ['sport', 'surfing'],
+      ['natural', 'beach'],
+    ],
+  },
+  {
+    id: 'ski',
+    label: 'Ski',
+    color: '#5AC8FA',
+    glyph: '<path d="M4 20l16-6"/><path d="M6 19l14-5"/><circle cx="16" cy="5" r="1.6"/><path d="M14 8l2 3 3 1"/>',
+    osm: [
+      ['sport', 'skiing'],
+      ['landuse', 'winter_sports'],
+    ],
+  },
+  {
+    id: 'climb',
+    label: 'Climb',
+    color: '#AF52DE',
+    glyph: '<circle cx="14" cy="5" r="1.6"/><path d="M13 8l-4 3 3 3-2 6"/><path d="M12 14l5 2 3-2"/><path d="M9 11l-4 1"/>',
+    osm: [['sport', 'climbing']],
+  },
+  {
+    id: 'golf',
+    label: 'Golf',
+    color: '#30D158',
+    glyph: '<path d="M11 3v14"/><path d="M11 5l6 2-6 2"/><path d="M6 21c1-1.5 3-2 5-2s4 .5 5 2"/>',
+    osm: [['leisure', 'golf_course']],
+  },
+  {
+    id: 'camp',
+    label: 'Camp',
+    color: '#FF9500',
+    glyph: '<path d="M12 4 3 20h18L12 4Z"/><path d="M12 4v16"/>',
+    osm: [
+      ['tourism', 'camp_site'],
+      ['tourism', 'wilderness_hut'],
+    ],
+  },
 ];
 
 export function categoryById(id: string | undefined): Category | undefined {

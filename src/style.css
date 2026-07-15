@@ -1347,6 +1347,398 @@ button {
   display: none;
 }
 
+/* ---------- Weather chip (left of search) ---------- */
+.weather-chip {
+  flex: none;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 15px 0 11px;
+  border-radius: 999px;
+  color: var(--text);
+  transition: transform 0.24s var(--spring), background 0.2s var(--ease);
+}
+.weather-chip:hover {
+  background: var(--glass-bg-strong, rgba(44, 46, 54, 0.7));
+}
+.weather-chip:active {
+  transform: scale(0.95);
+}
+.weather-chip-icon {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+.weather-chip-icon svg {
+  width: 100%;
+  height: 100%;
+}
+.weather-chip-temp {
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.2px;
+}
+
+/* ---------- Weather page (Apple Weather + surf) ---------- */
+.weather-page {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(24px);
+  transition: opacity 0.4s var(--ease), transform 0.5s var(--spring);
+  background:
+    radial-gradient(120% 90% at 50% -10%, #2d5a8c 0%, #1b2a44 45%, #0b1020 100%);
+  overflow: hidden;
+}
+.weather-page.is-open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+.weather-page[data-sky='night'] {
+  background: radial-gradient(120% 90% at 50% -10%, #24304d 0%, #131a2e 45%, #070a14 100%);
+}
+.weather-page[data-sky='clear'] {
+  background: radial-gradient(120% 90% at 50% -10%, #3a86c9 0%, #1f5591 45%, #0c2138 100%);
+}
+.weather-page[data-sky='cloudy'],
+.weather-page[data-sky='partly'] {
+  background: radial-gradient(120% 90% at 50% -10%, #4a5a73 0%, #2b3852 45%, #10161f 100%);
+}
+.weather-page[data-sky='rain'],
+.weather-page[data-sky='storm'] {
+  background: radial-gradient(120% 90% at 50% -10%, #35506b 0%, #232f45 45%, #0a0f1a 100%);
+}
+.weather-page[data-sky='snow'] {
+  background: radial-gradient(120% 90% at 50% -10%, #5a6b86 0%, #37455f 45%, #131a28 100%);
+}
+.wx-scroll {
+  height: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: max(18px, env(safe-area-inset-top)) 16px calc(env(safe-area-inset-bottom) + 32px);
+  max-width: 640px;
+  margin: 0 auto;
+  scrollbar-width: none;
+}
+.wx-scroll::-webkit-scrollbar {
+  display: none;
+}
+.wx-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0 8px;
+}
+.wx-close {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  font-size: 22px;
+  line-height: 1;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+}
+.wx-place {
+  font-size: 20px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wx-loading {
+  display: grid;
+  place-items: center;
+  padding: 80px 0;
+  color: rgba(255, 255, 255, 0.7);
+}
+.wx-hero {
+  text-align: center;
+  padding: 14px 0 22px;
+  color: #fff;
+}
+.wx-temp {
+  font-size: 84px;
+  font-weight: 200;
+  line-height: 1;
+  letter-spacing: -2px;
+}
+.wx-cond {
+  font-size: 19px;
+  font-weight: 500;
+  margin-top: 4px;
+  opacity: 0.92;
+}
+.wx-hilo {
+  font-size: 15px;
+  margin-top: 4px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+.wx-card {
+  background: rgba(255, 255, 255, 0.1);
+  border: 0.5px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  padding: 14px;
+  margin-bottom: 14px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+.wx-card-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  margin-bottom: 10px;
+}
+.wx-hourly {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.wx-hourly::-webkit-scrollbar {
+  display: none;
+}
+.wx-hour {
+  flex: none;
+  width: 54px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  color: #fff;
+}
+.wx-hour-t {
+  font-size: 14px;
+  opacity: 0.8;
+}
+.wx-hour-i {
+  width: 30px;
+  height: 30px;
+}
+.wx-hour-i svg {
+  width: 100%;
+  height: 100%;
+}
+.wx-hour-p {
+  font-size: 12px;
+  font-weight: 600;
+  color: #5ac8fa;
+  min-height: 15px;
+}
+.wx-hour-d {
+  font-size: 17px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.wx-daily {
+  display: flex;
+  flex-direction: column;
+}
+.wx-day {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 0.5px solid rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+.wx-day:first-child {
+  border-top: none;
+}
+.wx-day-name {
+  width: 46px;
+  font-size: 16px;
+  font-weight: 600;
+}
+.wx-day-i {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  position: relative;
+}
+.wx-day-i svg {
+  width: 100%;
+  height: 100%;
+}
+.wx-day-p {
+  font-size: 11px;
+  color: #5ac8fa;
+  font-weight: 600;
+}
+.wx-day-i .wx-day-p {
+  position: absolute;
+  bottom: -9px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+.wx-day-lo {
+  width: 34px;
+  text-align: right;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+.wx-day-hi {
+  width: 34px;
+  font-variant-numeric: tabular-nums;
+}
+.wx-range {
+  flex: 1;
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.16);
+  position: relative;
+}
+.wx-range-fill {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 3px;
+  min-width: 6px;
+}
+.wx-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.wx-tile {
+  background: rgba(255, 255, 255, 0.1);
+  border: 0.5px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  padding: 13px 15px;
+  color: #fff;
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+}
+.wx-tile-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+}
+.wx-tile-value {
+  font-size: 28px;
+  font-weight: 500;
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.wx-tile-sub {
+  font-size: 13px;
+  opacity: 0.7;
+  margin-top: auto;
+}
+/* Surf */
+.wx-surf-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.wx-rating {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--rating, #34c759);
+}
+.wx-rating-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--rating, #34c759);
+  box-shadow: 0 0 8px var(--rating, #34c759);
+}
+.wx-surf-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+  gap: 10px;
+  margin: 6px 0 14px;
+}
+.wx-surf-stat {
+  color: #fff;
+}
+.wx-surf-stat-v {
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.wx-surf-stat-l {
+  font-size: 12px;
+  opacity: 0.6;
+  margin-top: 2px;
+}
+.wx-sub {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.6);
+  margin: 8px 0 8px;
+}
+.wx-surf-hours {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.wx-surf-hours::-webkit-scrollbar {
+  display: none;
+}
+.wx-surf-hour {
+  flex: none;
+  width: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: #fff;
+}
+.wx-surf-wave {
+  font-size: 19px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.wx-surf-unit {
+  font-size: 11px;
+  opacity: 0.55;
+  margin-top: -4px;
+}
+.wx-surf-days {
+  display: flex;
+  flex-direction: column;
+}
+.wx-surf-day {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 0.5px solid rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+.wx-surf-dwave {
+  font-size: 16px;
+  font-weight: 700;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.wx-surf-empty,
+.wx-surf-loading {
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 14px;
+  padding: 6px 0;
+}
+
 /* ---------- Toast ---------- */
 .toast {
   position: absolute;
