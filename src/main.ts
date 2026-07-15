@@ -64,41 +64,50 @@ async function boot(root: HTMLElement): Promise<void> {
   try {
     setLoading(shell, true, 'Loading photoreal tiles');
     await globe.initPhotoreal();
+    setLoading(shell, true, 'Finding your location');
+    // Boot straight into the user's GPS location; fall back to a hero view.
+    const located = await field.locateOnBoot();
     setLoading(shell, false);
-    globe.flyToPlace(PLACES[0], 4.2);
+    if (!located) globe.flyToPlace(PLACES[0], 4.2);
   } catch (err) {
     handleTokenFailure(root, err);
   }
 }
 
 function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field): void {
-  // Destinations
-  shell.destinationsRail.addEventListener('click', (e) => {
-    const card = (e.target as HTMLElement).closest<HTMLElement>('.destination-card');
-    if (!card?.dataset.placeId) return;
-    const place = PLACES.find((p) => p.id === card.dataset.placeId);
-    if (!place) return;
-    setActiveCard(shell, card);
-    globe.flyToPlace(place);
-    collapseSearch(shell);
-  });
+  const closeMenu = () => shell.menu.classList.remove('is-open');
 
-  // Home / whole-planet view
-  shell.homeButton.addEventListener('click', () => {
-    setActiveCard(shell, null);
+  // Tools dropdown
+  shell.menuButton.addEventListener('click', (e) => {
+    e.stopPropagation();
+    shell.menu.classList.toggle('is-open');
+  });
+  shell.menu.addEventListener('click', (e) => e.stopPropagation());
+  document.addEventListener('click', closeMenu);
+
+  shell.menuLocate.addEventListener('click', () => {
+    field.recenter();
+    collapseSearch(shell);
+    closeMenu();
+  });
+  shell.menuWaypoint.addEventListener('click', () => {
+    field.addWaypointHere();
+    closeMenu();
+  });
+  shell.menuWaypoints.addEventListener('click', () => {
+    field.toggleWaypoints();
+    closeMenu();
+  });
+  shell.menuRecord.addEventListener('click', () => {
+    field.toggleRecording();
+    closeMenu();
+  });
+  shell.menuHome.addEventListener('click', () => {
     if (nav.isActive) nav.end();
     globe.flyWholePlanet(2.6);
     collapseSearch(shell);
+    closeMenu();
   });
-
-  // Field tools
-  shell.locateButton.addEventListener('click', () => {
-    field.recenter();
-    collapseSearch(shell);
-  });
-  shell.waypointButton.addEventListener('click', () => field.addWaypointHere());
-  shell.waypointsButton.addEventListener('click', () => field.toggleWaypoints());
-  shell.recordButton.addEventListener('click', () => field.toggleRecording());
 
   wireSearch(shell, globe, nav);
 }
@@ -187,13 +196,6 @@ function wireSearch(shell: Shell, globe: Globe, nav: Navigator): void {
 
 function collapseSearch(shell: Shell): void {
   shell.searchResults.classList.remove('is-open');
-}
-
-function setActiveCard(shell: Shell, card: HTMLElement | null): void {
-  shell.destinationsRail
-    .querySelectorAll('.destination-card.is-active')
-    .forEach((c) => c.classList.remove('is-active'));
-  card?.classList.add('is-active');
 }
 
 function setLoading(shell: Shell, on: boolean, label?: string): void {

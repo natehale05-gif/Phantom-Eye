@@ -4,7 +4,7 @@ import { toast } from './navigation';
 import type { Shell } from './ui';
 import { el } from './ui';
 import type { LngLat } from './geo';
-import { watchFixes, locationErrorText, type Fix } from './geoloc';
+import { getFix, watchFixes, locationErrorText, type Fix } from './geoloc';
 import { formatDistance, haversine } from './routing';
 
 interface Waypoint {
@@ -40,7 +40,7 @@ export class Field {
     private readonly nav: RouteNavigator,
   ) {
     this.globe.onFollow((on) => {
-      this.shell.locateButton.classList.toggle('is-active', on);
+      this.shell.menuLocate.classList.toggle('is-active', on);
     });
     for (const wp of this.waypoints) {
       this.globe.addWaypoint(wp.id, wp.lon, wp.lat, wp.label);
@@ -57,11 +57,27 @@ export class Field {
   /** My-location button: start tracking and enter the follow/chase camera. */
   recenter(): void {
     this.ensureWatching();
-    this.shell.locateButton.classList.add('is-busy');
+    this.shell.menuLocate.classList.add('is-busy');
     if (this.lastFix) {
       this.applyFix(this.lastFix);
       this.globe.setFollow(true);
-      this.shell.locateButton.classList.remove('is-busy');
+      this.shell.menuLocate.classList.remove('is-busy');
+    }
+  }
+
+  /** Locate once at boot: fly to and follow the user, if permitted. */
+  async locateOnBoot(): Promise<boolean> {
+    try {
+      const fix = await getFix();
+      this.lastFix = fix;
+      this.applyFix(fix);
+      this.globe.setFollow(true);
+      void this.refreshElevation(fix.lonlat);
+      this.updateHud();
+      this.ensureWatching();
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -70,7 +86,7 @@ export class Field {
     this.stopWatch = watchFixes(
       (fix) => this.onFix(fix),
       (err) => {
-        this.shell.locateButton.classList.remove('is-busy');
+        this.shell.menuLocate.classList.remove('is-busy');
         toast(this.shell, locationErrorText(err));
         this.stopWatch?.();
         this.stopWatch = undefined;
@@ -82,7 +98,7 @@ export class Field {
     const first = !this.lastFix;
     this.lastFix = fix;
     this.applyFix(fix);
-    this.shell.locateButton.classList.remove('is-busy');
+    this.shell.menuLocate.classList.remove('is-busy');
 
     if (first) this.globe.setFollow(true);
 
@@ -204,7 +220,7 @@ export class Field {
     this.globe.beginTrack();
     if (this.recordLast) void this.globe.pushTrackPoint(this.recordLast[0], this.recordLast[1]);
     this.ensureWatching();
-    this.shell.recordButton.classList.add('is-active');
+    this.setRecordUi(true);
     this.recordTimer = window.setInterval(() => this.updateHud(), 1000);
     this.updateHud();
     toast(this.shell, 'Recording track…');
@@ -214,9 +230,15 @@ export class Field {
     this.recording = false;
     if (this.recordTimer) window.clearInterval(this.recordTimer);
     this.recordTimer = undefined;
-    this.shell.recordButton.classList.remove('is-active');
+    this.setRecordUi(false);
     toast(this.shell, `Track saved · ${formatDistance(this.recordDistance)}`);
     this.updateHud();
+  }
+
+  private setRecordUi(on: boolean): void {
+    this.shell.menuRecord.classList.toggle('is-active', on);
+    const label = this.shell.menuRecord.querySelector('.menu-item-label');
+    if (label) label.textContent = on ? 'Stop Recording' : 'Record Track';
   }
 
   // ---------- HUD ----------

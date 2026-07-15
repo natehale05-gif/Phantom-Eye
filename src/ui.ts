@@ -1,4 +1,3 @@
-import { PLACES, type Place } from './places';
 import type { ManeuverKind } from './routing';
 
 /** Tiny hyperscript helper. */
@@ -25,13 +24,13 @@ export interface Shell {
   creditContainer: HTMLElement;
   searchInput: HTMLInputElement;
   searchResults: HTMLElement;
-  destinationsWrap: HTMLElement;
-  destinationsRail: HTMLElement;
-  homeButton: HTMLButtonElement;
-  locateButton: HTMLButtonElement;
-  waypointButton: HTMLButtonElement;
-  waypointsButton: HTMLButtonElement;
-  recordButton: HTMLButtonElement;
+  menuButton: HTMLButtonElement;
+  menu: HTMLElement;
+  menuLocate: HTMLButtonElement;
+  menuWaypoint: HTMLButtonElement;
+  menuWaypoints: HTMLButtonElement;
+  menuRecord: HTMLButtonElement;
+  menuHome: HTMLButtonElement;
   navPanel: HTMLElement;
   waypointsPanel: HTMLElement;
   guidance: HTMLElement;
@@ -65,32 +64,34 @@ export function buildShell(mount: HTMLElement): Shell {
     searchResults,
   ]);
 
-  const topBar = el('div', { class: 'top-bar' }, [brand, searchBar]);
+  // --- Menu dropdown (all tools) next to the search bar ---
+  const item = (icon: string, label: string) =>
+    el('button', { class: 'menu-item', type: 'button' }, [
+      el('span', { class: 'menu-item-icon', innerHTML: icon }),
+      el('span', { class: 'menu-item-label', textContent: label }),
+    ]);
 
-  // --- Destinations rail ---
-  const destinationsRail = el('div', { class: 'destinations' });
-  for (const place of PLACES) destinationsRail.append(destinationCard(place));
-  const destinationsWrap = el('div', { class: 'destinations-wrap' }, [
-    el('div', { class: 'destinations-title', textContent: 'Destinations' }),
-    destinationsRail,
+  const menuLocate = item(icons.locate, 'My Location');
+  const menuWaypoint = item(icons.pin, 'Drop Waypoint');
+  const menuWaypoints = item(icons.list, 'Waypoints');
+  const menuRecord = item(icons.record, 'Record Track');
+  const menuHome = item(icons.globe, 'Whole Planet');
+  const menu = el('div', { class: 'menu glass' }, [
+    menuLocate,
+    menuWaypoint,
+    menuWaypoints,
+    menuRecord,
+    menuHome,
   ]);
+  const menuButton = el('button', {
+    class: 'menu-button glass',
+    type: 'button',
+    title: 'Tools',
+    innerHTML: icons.menu,
+  });
+  const menuWrap = el('div', { class: 'menu-wrap' }, [menuButton, menu]);
 
-  // --- Side controls (field tools + globe reset) ---
-  const orb = (title: string, innerHTML: string) =>
-    el('button', { class: 'orb-button glass', type: 'button', title, innerHTML });
-
-  const waypointsButton = orb('Waypoints', icons.list);
-  const waypointButton = orb('Drop a waypoint', icons.pin);
-  const recordButton = orb('Record a track', icons.record);
-  const locateButton = orb('My location', icons.locate);
-  const homeButton = orb('View the whole planet', icons.globe);
-  const sideControls = el('div', { class: 'side-controls' }, [
-    waypointsButton,
-    waypointButton,
-    recordButton,
-    locateButton,
-    homeButton,
-  ]);
+  const topBar = el('div', { class: 'top-bar' }, [brand, searchBar, menuWrap]);
 
   // --- Bottom sheets + guidance banner + HUD (filled dynamically) ---
   const navPanel = el('div', { class: 'nav-panel' });
@@ -109,8 +110,6 @@ export function buildShell(mount: HTMLElement): Shell {
     cesiumContainer,
     el('div', { class: 'vignette' }),
     topBar,
-    destinationsWrap,
-    sideControls,
     navPanel,
     waypointsPanel,
     guidance,
@@ -127,13 +126,13 @@ export function buildShell(mount: HTMLElement): Shell {
     creditContainer,
     searchInput,
     searchResults,
-    destinationsWrap,
-    destinationsRail,
-    homeButton,
-    locateButton,
-    waypointButton,
-    waypointsButton,
-    recordButton,
+    menuButton,
+    menu,
+    menuLocate,
+    menuWaypoint,
+    menuWaypoints,
+    menuRecord,
+    menuHome,
     navPanel,
     waypointsPanel,
     guidance,
@@ -141,15 +140,6 @@ export function buildShell(mount: HTMLElement): Shell {
     loading,
     loadingLabel,
   };
-}
-
-function destinationCard(place: Place): HTMLButtonElement {
-  const card = el('button', { class: 'destination-card', type: 'button' }, [
-    el('span', { class: 'destination-name', textContent: place.name }),
-    el('span', { class: 'destination-region', textContent: place.region }),
-  ]);
-  card.dataset.placeId = place.id;
-  return card;
 }
 
 /** Onboarding overlay for entering a Cesium ion access token. */
@@ -216,6 +206,8 @@ const icons = {
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><line x1="9" y1="6" x2="20" y2="6"/><line x1="9" y1="12" x2="20" y2="12"/><line x1="9" y1="18" x2="20" y2="18"/><circle cx="4.5" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="4.5" cy="18" r="1.2" fill="currentColor" stroke="none"/></svg>`,
   record:
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"/></svg>`,
+  menu:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg>`,
   directions:
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 2 22 12 12 22 2 12Z"/><path d="M9 13v-2a2 2 0 0 1 2-2h4"/><path d="M13 6l3 3-3 3"/></svg>`,
   maneuver: {

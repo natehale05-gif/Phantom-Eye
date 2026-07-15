@@ -25,8 +25,11 @@ with turn-by-turn guidance played out across the 3D globe.
 - **Track recording** — record a breadcrumb trail on the globe with a live
   distance + elapsed-time readout.
 - **Coordinate + elevation HUD** — always know exactly where you are.
+- **Opens at your location** — on launch it flies to and follows your GPS
+  position (falling back to a hero view if location is unavailable).
 - **Search the planet** — Cesium ion geocoding with cinematic fly-to arrivals.
-- **Curated destinations** — hand-framed hero shots of iconic places.
+- **Tools menu** — every function (location, waypoints, recording, whole-planet)
+  lives in one Apple-style dropdown beside the search bar.
 - **Apple-grade UI** — frosted glass, SF-style typography, spring animations,
   and a calm, cinematic dark scene.
 - **Bring your own key** — enter your Cesium ion token once and it's remembered

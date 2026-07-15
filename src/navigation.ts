@@ -167,7 +167,6 @@ export class Navigator {
 
   private setState(state: NavState): void {
     this.state = state;
-    this.shell.destinationsWrap.classList.toggle('is-hidden', state !== 'idle');
   }
 
   private async tryLocateQuietly(): Promise<LngLat | null> {
