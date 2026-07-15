@@ -67,6 +67,7 @@ export class Globe {
   // Dropped place pins (search results / nearby categories).
   private placeMarkers: { entity: Cesium.Entity; place: PlacePin }[] = [];
   private onPlaceTapCb?: (place: PlacePin) => void;
+  private onMapTapCb?: () => void;
   private pickHandler?: Cesium.ScreenSpaceEventHandler;
 
   // Waypoints + track recording.
@@ -121,11 +122,17 @@ export class Globe {
       const picked = this.viewer.scene.pick(movement.position);
       const marker = picked?.id && this.placeMarkers.find((m) => m.entity === picked.id);
       if (marker) this.onPlaceTapCb?.(marker.place);
+      else this.onMapTapCb?.();
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
   }
 
   onPlaceTap(cb: (place: PlacePin) => void): void {
     this.onPlaceTapCb = cb;
+  }
+
+  /** Fires when the user taps empty map (no pin) — used to dismiss open popups. */
+  onMapTap(cb: () => void): void {
+    this.onMapTapCb = cb;
   }
 
   /** Cinematic, premium look: soft atmosphere, lighting, anti-aliasing. */

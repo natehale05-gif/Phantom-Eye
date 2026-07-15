@@ -56,6 +56,11 @@ export class Navigator {
     return this.state !== 'idle';
   }
 
+  /** Dismiss the route-planning sheet (but never interrupt active guidance). */
+  cancelPlanning(): void {
+    if (this.state === 'planning') this.end();
+  }
+
   private get route(): Route | undefined {
     return this.routes[this.routeIdx];
   }

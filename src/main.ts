@@ -151,6 +151,17 @@ function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field):
     showPlaceCard(shell, nav, field, place);
   });
 
+  // Tapping empty map dismisses whatever is open (menu, search, place card,
+  // route-planning sheet, waypoints) — but never interrupts active guidance.
+  globe.onMapTap(() => {
+    closeMenu();
+    collapseSearch(shell);
+    hidePlaceCard(shell);
+    field.closeWaypoints();
+    nav.cancelPlanning();
+    shell.searchInput.blur();
+  });
+
   wireSearch(shell, globe, nav, field);
   wireCategories(shell, globe, nav, field);
   wireMapControls(shell, globe);

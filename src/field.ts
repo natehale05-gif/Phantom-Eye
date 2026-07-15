@@ -162,6 +162,10 @@ export class Field {
     else this.shell.waypointsPanel.classList.remove('is-visible');
   }
 
+  closeWaypoints(): void {
+    if (this.waypointsOpen) this.toggleWaypoints();
+  }
+
   private renderWaypoints(): void {
     const close = el('button', { class: 'nav-close', type: 'button', innerHTML: '&times;' });
     close.addEventListener('click', () => this.toggleWaypoints());
