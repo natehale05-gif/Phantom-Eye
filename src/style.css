@@ -615,9 +615,9 @@ button {
 /* ---------- HUD (coordinates / elevation / recording) ---------- */
 .hud {
   position: absolute;
-  top: calc(max(20px, env(safe-area-inset-top)) + 62px);
+  bottom: calc(max(22px, env(safe-area-inset-bottom)) + 6px);
   left: 50%;
-  transform: translate(-50%, -10px);
+  transform: translate(-50%, 10px);
   z-index: 6;
   display: none;
   align-items: center;

@@ -32,7 +32,6 @@ export class Field {
 
   private waypoints: Waypoint[] = loadWaypoints();
   private waypointsOpen = false;
-  private surfaceElevation: number | null = null;
 
   constructor(
     private readonly shell: Shell,
@@ -72,8 +71,6 @@ export class Field {
       this.lastFix = fix;
       this.applyFix(fix);
       this.globe.setFollow(true);
-      void this.refreshElevation(fix.lonlat);
-      this.updateHud();
       this.ensureWatching();
       return true;
     } catch {
@@ -106,9 +103,8 @@ export class Field {
       void this.globe.pushTrackPoint(fix.lonlat[0], fix.lonlat[1]);
       if (this.recordLast) this.recordDistance += haversine(this.recordLast, fix.lonlat);
       this.recordLast = fix.lonlat;
+      this.updateHud();
     }
-    void this.refreshElevation(fix.lonlat);
-    this.updateHud();
   }
 
   private applyFix(fix: Fix): void {
@@ -118,14 +114,6 @@ export class Field {
       accuracy: fix.accuracy,
       heading: fix.heading,
     });
-  }
-
-  private async refreshElevation(lonlat: LngLat): Promise<void> {
-    const h = await this.globe.sampleHeight(lonlat[0], lonlat[1]);
-    if (h !== null && this.lastFix && this.lastFix.lonlat === lonlat) {
-      this.surfaceElevation = h;
-      this.updateHud();
-    }
   }
 
   // ---------- Waypoints ----------
@@ -256,15 +244,6 @@ export class Field {
       );
       return;
     }
-    if (this.lastFix) {
-      const [lon, lat] = this.lastFix.lonlat;
-      const elev = this.lastFix.altitude ?? this.surfaceElevation;
-      const parts = [formatCoord(lat, lon)];
-      if (elev !== null && elev !== undefined) parts.push(`${Math.round(elev * 3.28084)} ft`);
-      hud.className = 'hud is-visible';
-      hud.replaceChildren(el('span', { class: 'hud-line', textContent: parts.join('  ·  ') }));
-      return;
-    }
     hud.className = 'hud';
   }
 }
@@ -288,12 +267,6 @@ function saveWaypoints(list: Waypoint[]): void {
   } catch {
     /* ignore private-mode storage failures */
   }
-}
-
-function formatCoord(lat: number, lon: number): string {
-  const ns = lat >= 0 ? 'N' : 'S';
-  const ew = lon >= 0 ? 'E' : 'W';
-  return `${Math.abs(lat).toFixed(5)}° ${ns}, ${Math.abs(lon).toFixed(5)}° ${ew}`;
 }
 
 function clock(ms: number): string {
