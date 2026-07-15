@@ -46,7 +46,6 @@ interface LocationState {
 const toRad = Cesium.Math.toRadians;
 const ACCENT = Cesium.Color.fromCssColorString('#0A84FF'); // "you are here" GPS dot (blue)
 const WHITE = Cesium.Color.WHITE;
-const WAYPOINT_COLOR = Cesium.Color.fromCssColorString('#FF9F0A');
 const TRACK_COLOR = Cesium.Color.fromCssColorString('#FF375F');
 
 export class Globe {
@@ -68,10 +67,12 @@ export class Globe {
   private placeMarkers: { entity: Cesium.Entity; place: PlacePin }[] = [];
   private onPlaceTapCb?: (place: PlacePin) => void;
   private onMapTapCb?: () => void;
+  private onLongPressCb?: (lonlat: LngLat) => void;
+  private lastLongPress = 0;
   private pickHandler?: Cesium.ScreenSpaceEventHandler;
 
   // Waypoints + track recording.
-  private waypointEntities = new Map<string, Cesium.Entity>();
+  private waypointEntities = new Map<string, { entity: Cesium.Entity; place: PlacePin }>();
   private trackPositions: Cesium.Cartesian3[] = [];
   private trackEntity?: Cesium.Entity;
 
@@ -119,11 +120,20 @@ export class Globe {
   private setupPicking(): void {
     this.pickHandler = new Cesium.ScreenSpaceEventHandler(this.viewer.canvas);
     this.pickHandler.setInputAction((movement: { position: Cesium.Cartesian2 }) => {
+      // A press-and-hold just fired — swallow the click it also generates so we
+      // don't immediately dismiss the waypoint editor we just opened.
+      if (Date.now() - this.lastLongPress < 700) return;
       const picked = this.viewer.scene.pick(movement.position);
-      const marker = picked?.id && this.placeMarkers.find((m) => m.entity === picked.id);
-      if (marker) this.onPlaceTapCb?.(marker.place);
-      else this.onMapTapCb?.();
+      if (picked?.id) {
+        const marker = this.placeMarkers.find((m) => m.entity === picked.id);
+        if (marker) return this.onPlaceTapCb?.(marker.place);
+        for (const rec of this.waypointEntities.values()) {
+          if (rec.entity === picked.id) return this.onPlaceTapCb?.(rec.place);
+        }
+      }
+      this.onMapTapCb?.();
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+    this.setupLongPress();
   }
 
   onPlaceTap(cb: (place: PlacePin) => void): void {
@@ -133,6 +143,59 @@ export class Globe {
   /** Fires when the user taps empty map (no pin) — used to dismiss open popups. */
   onMapTap(cb: () => void): void {
     this.onMapTapCb = cb;
+  }
+
+  /** Fires when the user presses and holds on the map (drop a waypoint). */
+  onMapLongPress(cb: (lonlat: LngLat) => void): void {
+    this.onLongPressCb = cb;
+  }
+
+  private setupLongPress(): void {
+    const canvas = this.viewer.canvas;
+    let timer: number | undefined;
+    let sx = 0;
+    let sy = 0;
+    let pid = -1;
+    const clear = () => {
+      if (timer) window.clearTimeout(timer);
+      timer = undefined;
+      pid = -1;
+    };
+    canvas.addEventListener('pointerdown', (e) => {
+      if (timer) return clear(); // a second finger cancels (pinch/zoom)
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      pid = e.pointerId;
+      sx = e.clientX;
+      sy = e.clientY;
+      timer = window.setTimeout(() => {
+        timer = undefined;
+        const rect = canvas.getBoundingClientRect();
+        const ll = this.screenToLonLat(sx - rect.left, sy - rect.top);
+        if (ll) {
+          this.lastLongPress = Date.now();
+          this.onLongPressCb?.(ll);
+        }
+      }, 520);
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (timer && e.pointerId === pid && Math.hypot(e.clientX - sx, e.clientY - sy) > 12) clear();
+    });
+    canvas.addEventListener('pointerup', clear);
+    canvas.addEventListener('pointercancel', clear);
+    canvas.addEventListener('pointerleave', clear);
+    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  /** Convert a canvas pixel to [lon, lat] on the photoreal surface. */
+  screenToLonLat(x: number, y: number): LngLat | null {
+    const pt = new Cesium.Cartesian2(x, y);
+    const ray = this.viewer.camera.getPickRay(pt);
+    const pos =
+      this.viewer.scene.pickPosition(pt) ??
+      (ray ? this.viewer.scene.globe.pick(ray, this.viewer.scene) : undefined);
+    if (!pos) return null;
+    const carto = Cesium.Cartographic.fromCartesian(pos);
+    return [Cesium.Math.toDegrees(carto.longitude), Cesium.Math.toDegrees(carto.latitude)];
   }
 
   /** Cinematic, premium look: soft atmosphere, lighting, anti-aliasing. */
@@ -399,17 +462,10 @@ export class Globe {
 
   /** The [lon, lat] the camera is currently centered on (best-effort). */
   cameraCenterLonLat(): LngLat | null {
-    const center = new Cesium.Cartesian2(
+    return this.screenToLonLat(
       this.viewer.canvas.clientWidth / 2,
       this.viewer.canvas.clientHeight / 2,
     );
-    const ray = this.viewer.camera.getPickRay(center);
-    const pos =
-      this.viewer.scene.pickPosition(center) ??
-      (ray ? this.viewer.scene.globe.pick(ray, this.viewer.scene) : undefined);
-    if (!pos) return null;
-    const carto = Cesium.Cartographic.fromCartesian(pos);
-    return [Cesium.Math.toDegrees(carto.longitude), Cesium.Math.toDegrees(carto.latitude)];
   }
 
   // ---------- Surface height sampling ----------
@@ -613,31 +669,43 @@ export class Globe {
 
   // ---------- Waypoints ----------
 
-  addWaypoint(id: string, lon: number, lat: number, label: string): void {
+  addWaypoint(
+    id: string,
+    lon: number,
+    lat: number,
+    label: string,
+    color: string = DEFAULT_PIN_COLOR,
+    glyph = '',
+  ): void {
     this.removeWaypoint(id);
     const entity = this.viewer.entities.add({
       position: Cesium.Cartesian3.fromDegrees(lon, lat, 0),
-      point: {
-        pixelSize: 12,
-        color: WAYPOINT_COLOR,
-        outlineColor: WHITE,
-        outlineWidth: 2.5,
+      billboard: {
+        image: pinImage(color, glyph),
+        width: 42,
+        height: 55,
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        scaleByDistance: new Cesium.NearFarScalar(200, 1, 45000, 0.55),
       },
       label: {
         text: label,
-        font: '600 13px -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
+        font: '600 14px -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
         fillColor: WHITE,
         showBackground: true,
-        backgroundColor: new Cesium.Color(0, 0, 0, 0.55),
-        backgroundPadding: new Cesium.Cartesian2(8, 5),
-        pixelOffset: new Cesium.Cartesian2(0, -22),
+        backgroundColor: new Cesium.Color(0, 0, 0, 0.66),
+        backgroundPadding: new Cesium.Cartesian2(9, 6),
+        pixelOffset: new Cesium.Cartesian2(0, -60),
         verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        scaleByDistance: new Cesium.NearFarScalar(300, 1, 12000, 0.55),
+        scaleByDistance: new Cesium.NearFarScalar(200, 1, 12000, 0.65),
+        translucencyByDistance: new Cesium.NearFarScalar(9000, 1, 16000, 0),
+        style: Cesium.LabelStyle.FILL,
       },
     });
-    this.waypointEntities.set(id, entity);
+    const place: PlacePin = { name: label, detail: 'Waypoint', lon, lat };
+    this.waypointEntities.set(id, { entity, place });
     void this.refineWaypointHeight(id, lon, lat);
     this.viewer.scene.requestRender();
   }
@@ -645,25 +713,25 @@ export class Globe {
   private async refineWaypointHeight(id: string, lon: number, lat: number): Promise<void> {
     const h = await this.sampleHeight(lon, lat);
     if (h === null) return;
-    const entity = this.waypointEntities.get(id);
-    if (!entity) return;
-    entity.position = new Cesium.ConstantPositionProperty(
+    const rec = this.waypointEntities.get(id);
+    if (!rec) return;
+    rec.entity.position = new Cesium.ConstantPositionProperty(
       Cesium.Cartesian3.fromDegrees(lon, lat, h),
     );
     this.viewer.scene.requestRender();
   }
 
   removeWaypoint(id: string): void {
-    const entity = this.waypointEntities.get(id);
-    if (entity) {
-      this.viewer.entities.remove(entity);
+    const rec = this.waypointEntities.get(id);
+    if (rec) {
+      this.viewer.entities.remove(rec.entity);
       this.waypointEntities.delete(id);
       this.viewer.scene.requestRender();
     }
   }
 
   clearWaypoints(): void {
-    for (const e of this.waypointEntities.values()) this.viewer.entities.remove(e);
+    for (const rec of this.waypointEntities.values()) this.viewer.entities.remove(rec.entity);
     this.waypointEntities.clear();
     this.viewer.scene.requestRender();
   }

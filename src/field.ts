@@ -6,12 +6,21 @@ import { el } from './ui';
 import type { LngLat } from './geo';
 import { getFix, watchFixes, locationErrorText, type Fix } from './geoloc';
 import { formatDistance, haversine } from './routing';
+import {
+  WAYPOINT_COLORS,
+  WAYPOINT_ICONS,
+  DEFAULT_WAYPOINT_COLOR,
+  DEFAULT_WAYPOINT_ICON,
+  waypointGlyph,
+} from './waypointstyles';
 
 interface Waypoint {
   id: string;
   lon: number;
   lat: number;
   label: string;
+  color?: string;
+  icon?: string;
 }
 
 const WAYPOINTS_KEY = 'phantom-eye.waypoints';
@@ -42,9 +51,7 @@ export class Field {
     this.globe.onFollow((on) => {
       this.shell.menuLocate.classList.toggle('is-active', on);
     });
-    for (const wp of this.waypoints) {
-      this.globe.addWaypoint(wp.id, wp.lon, wp.lat, wp.label);
-    }
+    for (const wp of this.waypoints) this.drawWaypoint(wp);
   }
 
   /** Current location as a plain coordinate, for routing origins. */
@@ -138,17 +145,129 @@ export class Field {
       toast(this.shell, 'Pan to a spot first, then drop a waypoint.');
       return;
     }
-    this.addNamedWaypoint(at[0], at[1], `Waypoint ${this.waypoints.length + 1}`);
+    this.promptNewWaypoint(at[0], at[1]);
   }
 
   /** Save a named place as a favorite waypoint (used by the place card). */
-  addNamedWaypoint(lon: number, lat: number, label: string): void {
-    const wp: Waypoint = { id: `wp-${Date.now().toString(36)}`, lon, lat, label };
+  addNamedWaypoint(lon: number, lat: number, label: string, color?: string, icon?: string): void {
+    const wp: Waypoint = {
+      id: `wp-${Date.now().toString(36)}`,
+      lon,
+      lat,
+      label,
+      color: color ?? DEFAULT_WAYPOINT_COLOR,
+      icon: icon ?? DEFAULT_WAYPOINT_ICON,
+    };
     this.waypoints.push(wp);
     saveWaypoints(this.waypoints);
-    this.globe.addWaypoint(wp.id, wp.lon, wp.lat, wp.label);
+    this.drawWaypoint(wp);
     toast(this.shell, `Saved ${wp.label}`);
     if (this.waypointsOpen) this.renderWaypoints();
+  }
+
+  private drawWaypoint(wp: Waypoint): void {
+    this.globe.addWaypoint(
+      wp.id,
+      wp.lon,
+      wp.lat,
+      wp.label,
+      wp.color ?? DEFAULT_WAYPOINT_COLOR,
+      waypointGlyph(wp.icon),
+    );
+  }
+
+  /**
+   * Press-and-hold flow: pop up an editor to name the waypoint and pick a color
+   * and icon before dropping the pin at [lon, lat].
+   */
+  promptNewWaypoint(lon: number, lat: number): void {
+    const host = this.shell.waypointEditor;
+    let color = DEFAULT_WAYPOINT_COLOR;
+    let icon = DEFAULT_WAYPOINT_ICON;
+
+    const close = () => host.classList.remove('is-open');
+
+    const name = el('input', {
+      class: 'wp-editor-name',
+      type: 'text',
+      value: `Waypoint ${this.waypoints.length + 1}`,
+      autocomplete: 'off',
+      spellcheck: false,
+    }) as HTMLInputElement;
+
+    const card = el('div', { class: 'wp-editor-card glass' });
+    const setAccent = () => card.style.setProperty('--wp-accent', color);
+
+    // Colors
+    const colors = el('div', { class: 'wp-editor-colors' });
+    const swatches = WAYPOINT_COLORS.map((c) => {
+      const b = el('button', { class: `wp-swatch${c === color ? ' is-selected' : ''}`, type: 'button' });
+      b.style.setProperty('--sw', c);
+      b.addEventListener('click', () => {
+        color = c;
+        for (const s of swatches) s.classList.remove('is-selected');
+        b.classList.add('is-selected');
+        setAccent();
+        refreshIcons();
+      });
+      return b;
+    });
+    colors.append(...swatches);
+
+    // Icons
+    const iconsRow = el('div', { class: 'wp-editor-icons' });
+    const iconBtns = WAYPOINT_ICONS.map((ic) => {
+      const b = el('button', {
+        class: `wp-ico${ic.id === icon ? ' is-selected' : ''}`,
+        type: 'button',
+        title: ic.id,
+        innerHTML: ic.glyph
+          ? `<svg viewBox="0 0 24 24">${ic.glyph}</svg>`
+          : '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="currentColor" stroke="none"/></svg>',
+      });
+      b.addEventListener('click', () => {
+        icon = ic.id;
+        refreshIcons();
+      });
+      return b;
+    });
+    iconsRow.append(...iconBtns);
+    const refreshIcons = () => {
+      iconBtns.forEach((b, i) => b.classList.toggle('is-selected', WAYPOINT_ICONS[i].id === icon));
+    };
+
+    const cancel = el('button', { class: 'wp-editor-btn', type: 'button', textContent: 'Cancel' });
+    cancel.addEventListener('click', close);
+    const save = el('button', { class: 'wp-editor-btn wp-editor-save', type: 'button', textContent: 'Save' });
+    const commit = () => {
+      const label = name.value.trim() || `Waypoint ${this.waypoints.length + 1}`;
+      this.addNamedWaypoint(lon, lat, label, color, icon);
+      close();
+    };
+    save.addEventListener('click', commit);
+    name.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') commit();
+      else if (e.key === 'Escape') close();
+    });
+
+    card.append(
+      el('div', { class: 'wp-editor-title', textContent: 'New Waypoint' }),
+      name,
+      el('div', { class: 'wp-editor-label', textContent: 'Color' }),
+      colors,
+      el('div', { class: 'wp-editor-label', textContent: 'Icon' }),
+      iconsRow,
+      el('div', { class: 'wp-editor-actions' }, [cancel, save]),
+    );
+    setAccent();
+
+    const backdrop = el('div', { class: 'wp-editor-backdrop' });
+    backdrop.addEventListener('click', close);
+
+    host.replaceChildren(backdrop, card);
+    host.classList.add('is-open');
+    name.focus();
+    name.select();
   }
 
   /** Saved favorites, most-recent first (used by the search home list). */
@@ -172,7 +291,9 @@ export class Field {
 
     const rows = el('div', { class: 'wp-list' });
     if (this.waypoints.length === 0) {
-      rows.append(el('div', { class: 'wp-empty', textContent: 'No waypoints yet. Tap the pin to drop one.' }));
+      rows.append(
+        el('div', { class: 'wp-empty', textContent: 'No waypoints yet. Press and hold anywhere on the map to drop one.' }),
+      );
     }
     for (const wp of this.waypoints) rows.append(this.waypointRow(wp));
 
@@ -191,6 +312,14 @@ export class Field {
   }
 
   private waypointRow(wp: Waypoint): HTMLElement {
+    const glyph = waypointGlyph(wp.icon);
+    const badge = el('span', {
+      class: 'wp-badge',
+      innerHTML: glyph
+        ? `<svg viewBox="0 0 24 24">${glyph}</svg>`
+        : '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4" fill="#fff" stroke="none"/></svg>',
+    });
+    badge.style.setProperty('--sw', wp.color ?? DEFAULT_WAYPOINT_COLOR);
     const name = el('button', { class: 'wp-name', type: 'button', textContent: wp.label });
     name.addEventListener('click', () => {
       this.globe.flyToLonLat(wp.lon, wp.lat, 500, 0, -45, 2.6);
@@ -213,7 +342,7 @@ export class Field {
       saveWaypoints(this.waypoints);
       this.renderWaypoints();
     });
-    return el('div', { class: 'wp-row' }, [name, dir, del]);
+    return el('div', { class: 'wp-row' }, [badge, name, dir, del]);
   }
 
   // ---------- Track recording ----------

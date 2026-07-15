@@ -37,6 +37,7 @@ export interface Shell {
   categories: HTMLElement;
   navPanel: HTMLElement;
   waypointsPanel: HTMLElement;
+  waypointEditor: HTMLElement;
   placeCard: HTMLElement;
   guidance: HTMLElement;
   tripBar: HTMLElement;
@@ -131,6 +132,7 @@ export function buildShell(mount: HTMLElement): Shell {
   // --- Bottom sheets + guidance banner + HUD (filled dynamically) ---
   const navPanel = el('div', { class: 'nav-panel' });
   const waypointsPanel = el('div', { class: 'nav-panel' });
+  const waypointEditor = el('div', { class: 'wp-editor' });
   const weatherPage = el('div', { class: 'weather-page' });
   const placeCard = el('div', { class: 'place-card-wrap' });
   const guidance = el('div', { class: 'guidance' });
@@ -163,6 +165,7 @@ export function buildShell(mount: HTMLElement): Shell {
     hud,
     controls,
     creditContainer,
+    waypointEditor,
     loading,
   ]);
 
@@ -186,6 +189,7 @@ export function buildShell(mount: HTMLElement): Shell {
     categories,
     navPanel,
     waypointsPanel,
+    waypointEditor,
     placeCard,
     guidance,
     tripBar,

@@ -77,6 +77,7 @@ async function boot(root: HTMLElement): Promise<void> {
   );
   if (import.meta.env.DEV) (window as unknown as { __nav: Navigator }).__nav = nav;
   field = new Field(shell, globe, nav);
+  if (import.meta.env.DEV) (window as unknown as { __field: Field }).__field = field;
   field.onLocation((fix) => nav.onLocation(fix));
   weather = new WeatherPage(shell.weatherPage, async (lat, lon) => {
     const cat = categoryById('surf');
@@ -150,6 +151,9 @@ function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field):
     globe.focusPlace(place);
     showPlaceCard(shell, nav, field, place);
   });
+
+  // Press-and-hold on the map drops a waypoint (name + color + icon editor).
+  globe.onMapLongPress((lonlat) => field.promptNewWaypoint(lonlat[0], lonlat[1]));
 
   // Tapping empty map dismisses whatever is open (menu, search, place card,
   // route-planning sheet, waypoints) — but never interrupts active guidance.
