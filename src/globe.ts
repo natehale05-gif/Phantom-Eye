@@ -17,6 +17,9 @@ export interface PlacePin {
   website?: string;
   openingHours?: string;
   address?: string;
+  /** Set for user "marked locations" (waypoints): the pin color + glyph. */
+  markerColor?: string;
+  markerGlyph?: string;
 }
 
 /** Cesium ion asset ID for Google Photorealistic 3D Tiles (photoreal buildings + terrain). */
@@ -704,7 +707,14 @@ export class Globe {
         style: Cesium.LabelStyle.FILL,
       },
     });
-    const place: PlacePin = { name: label, detail: 'Waypoint', lon, lat };
+    const place: PlacePin = {
+      name: label,
+      detail: 'Marked Location',
+      lon,
+      lat,
+      markerColor: color,
+      markerGlyph: glyph,
+    };
     this.waypointEntities.set(id, { entity, place });
     void this.refineWaypointHeight(id, lon, lat);
     this.viewer.scene.requestRender();

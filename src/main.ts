@@ -8,7 +8,7 @@ import { searchPlaces, type PlaceResult } from './geocode';
 import { searchNearby, fetchPlaceDetails } from './nearby';
 import { formatDistance, haversine } from './routing';
 import { parseOpeningHours } from './hours';
-import { categoryById } from './categories';
+import { categoryById, DEFAULT_PIN_COLOR } from './categories';
 import { WeatherPage } from './weatherpage';
 import { fetchCurrentBrief, wmo } from './weather';
 import { weatherIcon } from './weathericons';
@@ -479,62 +479,114 @@ let cardToken = 0;
 function showPlaceCard(shell: Shell, nav: Navigator, field: Field, place: PlacePin): void {
   const token = ++cardToken;
   const cat = categoryById(place.categoryId);
-  const parts = [place.detail || cat?.label || 'Dropped pin'];
+  const isMarked = !!place.markerColor || place.detail === 'Marked Location';
+  const chipColor = place.markerColor ?? cat?.color ?? DEFAULT_PIN_COLOR;
+  const chipGlyph = place.markerGlyph ?? cat?.glyph ?? '';
+
+  // Subtitle: category (or "Marked Location") · distance from you.
+  const label = cat?.label ?? (isMarked ? 'Marked Location' : place.detail || 'Place');
+  const parts = [label];
   const origin = field.lastLonLat();
   if (origin) parts.push(formatDistance(haversine(origin, [place.lon, place.lat])));
   const subtitle = parts.filter(Boolean).join('  ·  ');
+
+  const chip = el('div', {
+    class: 'place-card-chip',
+    innerHTML: chipGlyph
+      ? `<svg viewBox="0 0 24 24">${chipGlyph}</svg>`
+      : '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="5" fill="#fff" stroke="none"/></svg>',
+  });
+  chip.style.setProperty('--chip', chipColor);
 
   const close = el('button', { class: 'place-card-close', type: 'button', innerHTML: '&times;' });
   close.addEventListener('click', () => hidePlaceCard(shell));
 
   const info = el('div', { class: 'place-card-info' });
-
-  const directions = el('button', { class: 'place-card-dir', type: 'button' }, [
-    el('span', { class: 'place-card-dir-icon', innerHTML: dirIcon }),
-    el('span', { textContent: 'Directions' }),
-  ]);
-  directions.addEventListener('click', () => {
-    hidePlaceCard(shell);
-    void nav.directionsTo([place.lon, place.lat], place.name);
-  });
-
-  // Secondary actions: Favorite + Share, Apple-style circular buttons.
-  const favorite = actionButton(cardIcons.star, 'Favorite', () => {
-    field.addNamedWaypoint(place.lon, place.lat, place.name);
-    favorite.classList.add('is-done');
-  });
-  const share = actionButton(cardIcons.share, 'Share', () => sharePlace(shell, place));
-  const acts = [directions, favorite, share];
-  if (place.categoryId === 'surf') {
-    acts.push(
-      actionButton(cardIcons.surf, 'Surf', () => {
-        hidePlaceCard(shell);
-        void weather?.open(place.lat, place.lon, place.name, 'surf');
-      }),
-    );
-  }
-  const actions = el('div', { class: 'place-card-actions' }, acts);
+  const actions = el('div', { class: 'place-card-actions' });
 
   const card = el('div', { class: 'place-card glass' }, [
+    el('div', { class: 'place-card-grabber' }),
     el('div', { class: 'place-card-head' }, [
+      chip,
       el('div', { class: 'place-card-text' }, [
         el('div', { class: 'place-card-name', textContent: place.name }),
         el('div', { class: 'place-card-detail', textContent: subtitle }),
       ]),
       close,
     ]),
-    info,
     actions,
+    info,
   ]);
   shell.placeCard.replaceChildren(card);
   shell.placeCard.classList.add('is-visible');
 
-  renderCardInfo(info, place);
-  void enrichPlaceCard(info, place, token);
+  const render = () => {
+    renderCardActions(actions, shell, nav, field, place, isMarked);
+    renderCardInfo(info, place, isMarked);
+  };
+  render();
+  void enrichPlaceCard(place, token, render);
 }
 
-function actionButton(icon: string, label: string, onClick: () => void): HTMLButtonElement {
-  const btn = el('button', { class: 'place-card-act', type: 'button', title: label }, [
+/** Apple-Maps-style horizontal row of round action buttons. */
+function renderCardActions(
+  host: HTMLElement,
+  shell: Shell,
+  nav: Navigator,
+  field: Field,
+  place: PlacePin,
+  isMarked: boolean,
+): void {
+  const acts: HTMLButtonElement[] = [];
+
+  acts.push(
+    roundAction(cardIcons.directions, 'Directions', true, () => {
+      hidePlaceCard(shell);
+      void nav.directionsTo([place.lon, place.lat], place.name);
+    }),
+  );
+
+  if (place.phone) {
+    const tel = `tel:${place.phone.replace(/[^+\d]/g, '')}`;
+    acts.push(roundAction(cardIcons.call, 'Call', false, () => { window.location.href = tel; }));
+  }
+  if (place.website) {
+    const site = place.website;
+    acts.push(roundAction(cardIcons.globe, 'Website', false, () => window.open(site, '_blank', 'noopener')));
+  }
+
+  // Marked locations are already saved waypoints; don't offer to re-save them.
+  if (!isMarked) {
+    const favorite = roundAction(cardIcons.star, 'Favorite', false, () => {
+      if (favorite.classList.contains('is-done')) return;
+      field.addNamedWaypoint(place.lon, place.lat, place.name);
+      favorite.classList.add('is-done');
+      const lb = favorite.querySelector('.place-card-act-label');
+      if (lb) lb.textContent = 'Saved';
+    });
+    acts.push(favorite);
+  }
+
+  acts.push(roundAction(cardIcons.share, 'Share', false, () => void sharePlace(shell, place)));
+
+  if (place.categoryId === 'surf') {
+    acts.push(
+      roundAction(cardIcons.surf, 'Surf', false, () => {
+        hidePlaceCard(shell);
+        void weather?.open(place.lat, place.lon, place.name, 'surf');
+      }),
+    );
+  }
+
+  host.replaceChildren(...acts);
+}
+
+function roundAction(icon: string, label: string, primary: boolean, onClick: () => void): HTMLButtonElement {
+  const btn = el('button', {
+    class: `place-card-act${primary ? ' is-primary' : ''}`,
+    type: 'button',
+    title: label,
+  }, [
     el('span', { class: 'place-card-act-icon', innerHTML: icon }),
     el('span', { class: 'place-card-act-label', textContent: label }),
   ]) as HTMLButtonElement;
@@ -558,16 +610,22 @@ async function sharePlace(shell: Shell, place: PlacePin): Promise<void> {
 }
 
 const cardIcons = {
+  directions:
+    '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M21.7 11.3 12.7 2.3a1 1 0 0 0-1.4 0l-9 9a1 1 0 0 0 0 1.4l9 9a1 1 0 0 0 1.4 0l9-9a1 1 0 0 0 0-1.4ZM13 14.5V12h-2.5a1 1 0 0 0-1 1v2H8v-2.5A2.5 2.5 0 0 1 10.5 10H13V7.5l3.5 3.5Z"/></svg>',
   star:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 17l-5.2 2.7 1-5.9-4.3-4.1 5.9-.8Z"/></svg>',
   share:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4"/><path d="M8 8l4-4 4 4"/><path d="M6 12v6a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-6"/></svg>',
+  call:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 3h3l2 5-2 1a12 12 0 0 0 5 5l1-2 5 2v3a2 2 0 0 1-2 2A16 16 0 0 1 4 5a2 2 0 0 1 2-2Z"/></svg>',
+  globe:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><line x1="3" y1="12" x2="21" y2="12"/></svg>',
   surf:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16c4 0 4-2 8-2s4 2 8 2"/><path d="M3 20c4 0 4-2 8-2s4 2 8 2"/><path d="M14 4c3 3 3 7 0 10"/></svg>',
 };
 
 /** Fill the info section (hours, phone, website, address) from what we have. */
-function renderCardInfo(info: HTMLElement, place: PlacePin): void {
+function renderCardInfo(info: HTMLElement, place: PlacePin, isMarked = false): void {
   const rows: HTMLElement[] = [];
 
   if (place.openingHours) {
@@ -611,10 +669,23 @@ function renderCardInfo(info: HTMLElement, place: PlacePin): void {
     rows.push(infoRow(infoIcons.pin, el('span', { class: 'place-info-text', textContent: place.address })));
   }
 
+  // Marked locations (dropped pins / waypoints): show the coordinates like Apple.
+  if (isMarked) {
+    rows.push(
+      infoRow(infoIcons.pin, el('span', { class: 'place-info-text', textContent: formatLatLon(place.lat, place.lon) })),
+    );
+  }
+
   info.replaceChildren(...rows);
 }
 
-async function enrichPlaceCard(info: HTMLElement, place: PlacePin, token: number): Promise<void> {
+function formatLatLon(lat: number, lon: number): string {
+  const ns = lat >= 0 ? 'N' : 'S';
+  const ew = lon >= 0 ? 'E' : 'W';
+  return `${Math.abs(lat).toFixed(5)}° ${ns}, ${Math.abs(lon).toFixed(5)}° ${ew}`;
+}
+
+async function enrichPlaceCard(place: PlacePin, token: number, render: () => void): Promise<void> {
   const needsInfo = !place.openingHours && !place.phone && !place.website;
   if (!needsInfo || !place.osmType || !place.osmId) return;
   try {
@@ -626,7 +697,7 @@ async function enrichPlaceCard(info: HTMLElement, place: PlacePin, token: number
       website: place.website ?? details.website,
       address: place.address ?? details.address,
     });
-    renderCardInfo(info, place);
+    render();
   } catch {
     /* keep the basic card */
   }
