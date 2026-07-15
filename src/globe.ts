@@ -79,6 +79,12 @@ export class Globe {
   private driveCumulative: number[] = [];
   private driveRaf?: number;
 
+  // Route rendering state (positions are clamped to the photoreal surface).
+  private altPaths: Cesium.Cartesian3[][] = [];
+  private routeStart?: Cesium.Entity;
+  private routeEnd?: Cesium.Entity;
+  private routeClampToken = 0;
+
   constructor(container: HTMLElement, creditContainer: HTMLElement) {
     Cesium.Ion.defaultAccessToken = getActiveToken();
 
@@ -307,7 +313,7 @@ export class Globe {
       billboard: {
         image,
         width: 42,
-        height: 54,
+        height: 55,
         verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
         scaleByDistance: new Cesium.NearFarScalar(200, 1, 45000, 0.55),
@@ -319,7 +325,7 @@ export class Globe {
         showBackground: true,
         backgroundColor: new Cesium.Color(0, 0, 0, 0.66),
         backgroundPadding: new Cesium.Cartesian2(9, 6),
-        pixelOffset: new Cesium.Cartesian2(0, -58),
+        pixelOffset: new Cesium.Cartesian2(0, -60),
         verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
         horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
@@ -688,16 +694,22 @@ export class Globe {
 
   clearRoute(): void {
     this.cancelDrive();
+    this.routeClampToken++;
     for (const e of this.routeEntities) this.viewer.entities.remove(e);
     this.routeEntities = [];
+    this.altPaths = [];
+    this.routeStart = undefined;
+    this.routeEnd = undefined;
     this.drivePath = [];
     this.driveCumulative = [];
     this.viewer.scene.requestRender();
   }
 
   /**
-   * Draws a route polyline with endpoints. The line uses a depth-fail material
-   * so it stays visible even where the photoreal buildings would occlude it.
+   * Draws a route polyline with endpoints. Positions start at a provisional
+   * height and are then clamped onto the photoreal surface so the line hugs the
+   * ground/roads instead of floating (or sinking) through the map. A depth-fail
+   * material keeps it visible where buildings would otherwise occlude it.
    */
   showRoute(coordinates: LngLat[]): void {
     this.clearRoute();
@@ -708,47 +720,96 @@ export class Globe {
     const sampled = downsample(coordinates, 300);
 
     const path = sampled.map((lonlat) => ({
-      cart: Cesium.Cartesian3.fromDegrees(lonlat[0], lonlat[1], 3),
+      cart: Cesium.Cartesian3.fromDegrees(lonlat[0], lonlat[1], 2),
       lonlat,
     }));
     this.drivePath = path;
     this.driveCumulative = cumulativeDistances(path.map((p) => p.lonlat));
 
-    const positions = path.map((p) => p.cart);
     const line = this.viewer.entities.add({
       polyline: {
-        positions,
+        positions: new Cesium.CallbackProperty(() => this.drivePath.map((p) => p.cart), false),
         width: 9,
         material: new Cesium.PolylineGlowMaterialProperty({ glowPower: 0.22, color: ACCENT }),
         depthFailMaterial: new Cesium.ColorMaterialProperty(ACCENT.withAlpha(0.55)),
       },
     });
-    const start = this.pin(path[0].cart, Cesium.Color.fromCssColorString('#32D74B'));
-    const end = this.pin(path[path.length - 1].cart, Cesium.Color.fromCssColorString('#FF453A'));
-    this.routeEntities.push(line, start, end);
+    this.routeStart = this.pin(path[0].cart, Cesium.Color.fromCssColorString('#32D74B'));
+    this.routeEnd = this.pin(path[path.length - 1].cart, Cesium.Color.fromCssColorString('#FF453A'));
+    this.routeEntities.push(line, this.routeStart, this.routeEnd);
     this.viewer.scene.requestRender();
+    void this.clampSelectedRoute(sampled);
   }
 
   /**
    * Draw the selected route plus dimmed alternates (Apple-Maps style). The
    * selected route gets the glowing accent line and start/end pins; alternates
-   * render as muted gray lines behind it.
+   * render as muted gray lines behind it. All lines are clamped to the surface.
    */
   showRouteWithAlternates(selected: LngLat[], others: LngLat[][]): void {
     this.clearRoute();
-    for (const alt of others) {
-      const positions = downsample(alt, 300).map((c) => Cesium.Cartesian3.fromDegrees(c[0], c[1], 3));
+    others.forEach((alt) => {
+      const sampled = downsample(alt, 300);
+      const carts = sampled.map((c) => Cesium.Cartesian3.fromDegrees(c[0], c[1], 2));
+      const idx = this.altPaths.push(carts) - 1;
       const line = this.viewer.entities.add({
         polyline: {
-          positions,
+          positions: new Cesium.CallbackProperty(() => this.altPaths[idx], false),
           width: 7,
           material: new Cesium.ColorMaterialProperty(Cesium.Color.fromCssColorString('#8E8E93').withAlpha(0.55)),
           depthFailMaterial: new Cesium.ColorMaterialProperty(Cesium.Color.fromCssColorString('#8E8E93').withAlpha(0.32)),
         },
       });
       this.routeEntities.push(line);
-    }
+      void this.clampAlternate(idx, sampled);
+    });
     this.drawSelectedRoute(selected);
+  }
+
+  /** Batch-clamp the route vertices onto the photoreal surface, then redraw. */
+  private async clampSelectedRoute(sampled: LngLat[]): Promise<void> {
+    const token = this.routeClampToken;
+    const heights = await this.sampleHeights(sampled);
+    if (token !== this.routeClampToken) return; // route changed/cleared
+    for (let i = 0; i < heights.length && i < this.drivePath.length; i++) {
+      const h = heights[i];
+      if (h === null) continue;
+      this.drivePath[i].cart = Cesium.Cartesian3.fromDegrees(sampled[i][0], sampled[i][1], h + 1.5);
+    }
+    if (this.routeStart) this.routeStart.position = new Cesium.ConstantPositionProperty(this.drivePath[0].cart);
+    if (this.routeEnd) {
+      this.routeEnd.position = new Cesium.ConstantPositionProperty(this.drivePath[this.drivePath.length - 1].cart);
+    }
+    this.viewer.scene.requestRender();
+  }
+
+  private async clampAlternate(idx: number, sampled: LngLat[]): Promise<void> {
+    const token = this.routeClampToken;
+    const heights = await this.sampleHeights(sampled);
+    if (token !== this.routeClampToken) return;
+    const arr = this.altPaths[idx];
+    if (!arr) return;
+    for (let i = 0; i < heights.length && i < arr.length; i++) {
+      const h = heights[i];
+      if (h === null) continue;
+      arr[i] = Cesium.Cartesian3.fromDegrees(sampled[i][0], sampled[i][1], h + 1.2);
+    }
+    this.viewer.scene.requestRender();
+  }
+
+  /** Clamp a batch of coordinates to the photoreal surface (heights or null). */
+  private async sampleHeights(coords: LngLat[]): Promise<(number | null)[]> {
+    const flat = coords.map((c) => Cesium.Cartesian3.fromDegrees(c[0], c[1], 0));
+    try {
+      const clamped = await this.viewer.scene.clampToHeightMostDetailed(flat);
+      return clamped.map((c) => {
+        if (!c) return null;
+        const h = Cesium.Cartographic.fromCartesian(c).height;
+        return plausibleHeight(h) ? h : null;
+      });
+    } catch {
+      return coords.map(() => null);
+    }
   }
 
   private pin(position: Cesium.Cartesian3, color: Cesium.Color): Cesium.Entity {
@@ -860,28 +921,54 @@ export class Globe {
 const pinCache = new Map<string, string>();
 
 /**
- * A crisp Apple-style teardrop pin as an SVG data URI: a colored drop with a
- * white head holding a category glyph (or a clean white dot for plain results).
+ * A refined Apple-style teardrop pin as an SVG data URI: a glossy, vertically
+ * shaded colored drop with a soft drop shadow, a floating ground shadow, and a
+ * white head holding a category glyph (or a clean dot for plain results).
  */
 function pinImage(color: string, glyph: string): string {
   const key = `${color}|${glyph}`;
   const cached = pinCache.get(key);
   if (cached) return cached;
 
+  const light = mixWithWhite(color, 0.3);
   const head = glyph
     ? `<circle cx="32" cy="30" r="13.5" fill="#fff"/>` +
+      `<circle cx="32" cy="30" r="13.5" fill="none" stroke="${color}" stroke-opacity="0.15" stroke-width="1"/>` +
       `<g transform="translate(20 18) scale(0.833)" fill="none" stroke="${color}" ` +
       `stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${glyph}</g>`
-    : `<circle cx="32" cy="30" r="7" fill="#fff"/>`;
+    : `<circle cx="32" cy="30" r="7.5" fill="#fff"/>` +
+      `<circle cx="32" cy="30" r="3.4" fill="${color}"/>`;
 
   const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="80" viewBox="0 0 64 80">` +
-    `<path d="M32 78 C20 58 8 46 8 30 A24 24 0 1 1 56 30 C56 46 44 58 32 78 Z" ` +
-    `fill="${color}" stroke="#fff" stroke-width="3"/>${head}</svg>`;
+    `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="84" viewBox="0 0 64 84">` +
+    `<defs>` +
+    `<linearGradient id="pg" x1="0" y1="0" x2="0" y2="1">` +
+    `<stop offset="0" stop-color="${light}"/><stop offset="1" stop-color="${color}"/>` +
+    `</linearGradient>` +
+    `<filter id="ps" x="-40%" y="-30%" width="180%" height="170%">` +
+    `<feDropShadow dx="0" dy="1.5" stdDeviation="2" flood-color="#000" flood-opacity="0.45"/>` +
+    `</filter>` +
+    `</defs>` +
+    `<ellipse cx="32" cy="79.5" rx="7" ry="2.2" fill="#000" opacity="0.22"/>` +
+    `<path d="M32 77 C21 58 8 46 8 30 A24 24 0 1 1 56 30 C56 46 43 58 32 77 Z" ` +
+    `fill="url(#pg)" stroke="#fff" stroke-width="3" filter="url(#ps)"/>` +
+    `<ellipse cx="32" cy="19" rx="15" ry="8.5" fill="#fff" opacity="0.18"/>` +
+    `${head}</svg>`;
 
   const uri = `data:image/svg+xml,${encodeURIComponent(svg)}`;
   pinCache.set(key, uri);
   return uri;
+}
+
+/** Blend a #rrggbb color toward white by `amt` (0–1), returning an rgb() string. */
+function mixWithWhite(hex: string, amt: number): string {
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex.trim());
+  if (!m) return hex;
+  const mix = (h: string) => {
+    const c = parseInt(h, 16);
+    return Math.round(c + (255 - c) * amt);
+  };
+  return `rgb(${mix(m[1])}, ${mix(m[2])}, ${mix(m[3])})`;
 }
 
 // ---------- helpers ----------
