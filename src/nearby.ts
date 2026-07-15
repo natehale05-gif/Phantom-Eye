@@ -15,6 +15,7 @@ import { haversine } from './routing';
 const ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
 const RADIUS_M = 3000;
@@ -77,6 +78,7 @@ async function fetchOverpass(query: string): Promise<{ elements?: OverpassElemen
     try {
       const res = await fetch(endpoint, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: `data=${encodeURIComponent(query)}`,
         signal: controller.signal,
       });

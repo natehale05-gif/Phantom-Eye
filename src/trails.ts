@@ -14,10 +14,12 @@ import * as Cesium from 'cesium';
  */
 
 export type TrailLayerId = 'offroad' | 'hiking' | 'mtb';
+export type TrailStatus = 'loading' | 'done' | 'empty' | 'error';
 
 const ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
 
@@ -53,20 +55,27 @@ interface LayerState {
   cache: Map<string, TrailWay[]>;
   lastKey: string;
   token: number;
+  announce: boolean;
+  debounce?: number;
 }
 
 export class TrailLayers {
   private readonly layers: Record<TrailLayerId, LayerState>;
   private removeListener?: Cesium.Event.RemoveCallback;
-  private debounce?: number;
+  private statusHandler?: (id: TrailLayerId, status: TrailStatus, count: number) => void;
 
   constructor(private readonly viewer: Cesium.Viewer) {
     const make = (id: string): LayerState => {
       const ds = new Cesium.CustomDataSource(id);
       void viewer.dataSources.add(ds);
-      return { enabled: false, ds, cache: new Map(), lastKey: '', token: 0 };
+      return { enabled: false, ds, cache: new Map(), lastKey: '', token: 0, announce: false };
     };
     this.layers = { offroad: make('offroad'), hiking: make('hiking'), mtb: make('mtb') };
+  }
+
+  /** Report load state (loading/done/empty/error) after a user enables a layer. */
+  onStatus(cb: (id: TrailLayerId, status: TrailStatus, count: number) => void): void {
+    this.statusHandler = cb;
   }
 
   setEnabled(id: TrailLayerId, on: boolean): void {
@@ -75,68 +84,93 @@ export class TrailLayers {
     if (!on) {
       layer.ds.entities.removeAll();
       layer.lastKey = '';
+      layer.announce = false;
       this.viewer.scene.requestRender();
+    } else {
+      layer.announce = true; // report the outcome of this first load to the user
     }
     const anyOn = Object.values(this.layers).some((l) => l.enabled);
     if (anyOn && !this.removeListener) {
       this.viewer.camera.percentageChanged = 0.3;
-      this.removeListener = this.viewer.camera.changed.addEventListener(() => this.schedule());
+      this.removeListener = this.viewer.camera.changed.addEventListener(() => this.scheduleAll());
     } else if (!anyOn && this.removeListener) {
       this.removeListener();
       this.removeListener = undefined;
     }
-    if (on) this.schedule(200);
+    if (on) this.schedule(id, 150);
   }
 
   isEnabled(id: TrailLayerId): boolean {
     return this.layers[id].enabled;
   }
 
-  private schedule(delay = 550): void {
-    window.clearTimeout(this.debounce);
-    this.debounce = window.setTimeout(() => void this.refreshAll(), delay);
+  private scheduleAll(): void {
+    for (const id of Object.keys(this.layers) as TrailLayerId[]) {
+      if (this.layers[id].enabled) this.schedule(id);
+    }
+  }
+
+  // Each layer refreshes on its own timer so several layers can load in parallel
+  // without racing each other (which previously left some layers blank).
+  private schedule(id: TrailLayerId, delay = 550): void {
+    const layer = this.layers[id];
+    window.clearTimeout(layer.debounce);
+    layer.debounce = window.setTimeout(() => void this.refreshLayer(id), delay);
   }
 
   private altitude(): number {
     return Cesium.Cartographic.fromCartesian(this.viewer.camera.positionWC).height;
   }
 
-  private async refreshAll(): Promise<void> {
+  private async refreshLayer(id: TrailLayerId): Promise<void> {
+    const layer = this.layers[id];
+    if (!layer.enabled) return;
+
     const rect = this.viewer.camera.computeViewRectangle(this.viewer.scene.globe.ellipsoid);
-    const tooFar = this.altitude() > MAX_ALTITUDE;
-    for (const id of Object.keys(this.layers) as TrailLayerId[]) {
-      const layer = this.layers[id];
-      if (!layer.enabled) continue;
-      if (!rect || tooFar) {
-        if (layer.ds.entities.values.length) layer.ds.entities.removeAll();
-        layer.lastKey = '';
-        continue;
+    if (!rect || this.altitude() > MAX_ALTITUDE) {
+      if (layer.ds.entities.values.length) layer.ds.entities.removeAll();
+      layer.lastKey = '';
+      if (layer.announce) {
+        layer.announce = false;
+        this.statusHandler?.(id, 'empty', 0);
       }
-      const s = Cesium.Math.toDegrees(rect.south);
-      const w = Cesium.Math.toDegrees(rect.west);
-      const n = Cesium.Math.toDegrees(rect.north);
-      const e = Cesium.Math.toDegrees(rect.east);
-      if (n - s > MAX_SPAN_DEG || e - w > MAX_SPAN_DEG) continue;
-
-      const key = `${s.toFixed(2)},${w.toFixed(2)},${n.toFixed(2)},${e.toFixed(2)}`;
-      if (key === layer.lastKey) continue;
-      layer.lastKey = key;
-
-      const current = ++layer.token;
-      let ways = layer.cache.get(key);
-      if (!ways) {
-        const fetched = await this.fetchTrails(id, s, w, n, e);
-        if (current !== layer.token || !layer.enabled) return;
-        if (!fetched) {
-          layer.lastKey = '';
-          continue;
-        }
-        ways = fetched;
-        layer.cache.set(key, ways);
-      }
-      this.draw(layer, ways);
+      this.viewer.scene.requestRender();
+      return;
     }
+    const s = Cesium.Math.toDegrees(rect.south);
+    const w = Cesium.Math.toDegrees(rect.west);
+    const n = Cesium.Math.toDegrees(rect.north);
+    const e = Cesium.Math.toDegrees(rect.east);
+    if (n - s > MAX_SPAN_DEG || e - w > MAX_SPAN_DEG) return;
+
+    const key = `${s.toFixed(2)},${w.toFixed(2)},${n.toFixed(2)},${e.toFixed(2)}`;
+    if (key === layer.lastKey) return;
+    layer.lastKey = key;
+
+    const current = ++layer.token;
+    let ways = layer.cache.get(key);
+    if (!ways) {
+      if (layer.announce) this.statusHandler?.(id, 'loading', 0);
+      const fetched = await this.fetchTrails(id, s, w, n, e);
+      // A newer refresh for this layer superseded us, or it was turned off.
+      if (current !== layer.token || !layer.enabled) return;
+      if (!fetched) {
+        layer.lastKey = '';
+        if (layer.announce) {
+          layer.announce = false;
+          this.statusHandler?.(id, 'error', 0);
+        }
+        return;
+      }
+      ways = fetched;
+      layer.cache.set(key, ways);
+    }
+    this.draw(layer, ways);
     this.viewer.scene.requestRender();
+    if (layer.announce) {
+      layer.announce = false;
+      this.statusHandler?.(id, ways.length ? 'done' : 'empty', ways.length);
+    }
   }
 
   private async fetchTrails(
@@ -156,6 +190,7 @@ export class TrailLayers {
         const timer = setTimeout(() => controller.abort(), 15000);
         const res = await fetch(endpoint, {
           method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: `data=${encodeURIComponent(query)}`,
           signal: controller.signal,
         });

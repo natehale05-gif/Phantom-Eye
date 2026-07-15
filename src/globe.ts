@@ -4,7 +4,7 @@ import type { Place } from './places';
 import { bearingDeg, type LngLat } from './geo';
 import { categoryById, DEFAULT_PIN_COLOR } from './categories';
 import { StreetLabels } from './streetlabels';
-import { TrailLayers, type TrailLayerId } from './trails';
+import { TrailLayers, type TrailLayerId, type TrailStatus } from './trails';
 
 /** A place that can be dropped as a map pin. */
 export interface PlacePin {
@@ -135,6 +135,11 @@ export class Globe {
   /** Toggle a trail overlay (offroad / hiking / mtb), coloured by difficulty. */
   setTrailLayer(id: TrailLayerId, on: boolean): void {
     this.trails?.setEnabled(id, on);
+  }
+
+  /** Report trail load state (loading/done/empty/error) to the UI. */
+  onTrailStatus(cb: (id: TrailLayerId, status: TrailStatus, count: number) => void): void {
+    this.trails?.onStatus(cb);
   }
 
   /**

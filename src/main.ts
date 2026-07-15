@@ -165,7 +165,7 @@ function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field):
   // Trail overlays (offroad / hiking / mtb), coloured by difficulty. Off by
   // default (they stream OSM data); each preference is persisted.
   const trailItems = { offroad: shell.menuOffroad, hiking: shell.menuHiking, mtb: shell.menuMtb };
-  const trailLabel = { offroad: 'Offroad trails', hiking: 'Hiking trails', mtb: 'MTB trails' };
+  const trailLabel = { offroad: 'Offroad', hiking: 'Hiking', mtb: 'MTB' };
   const updateLegend = () => {
     const anyOn = Object.values(trailItems).some((it) => it.classList.contains('is-active'));
     shell.trailLegend.classList.toggle('is-visible', anyOn);
@@ -173,15 +173,23 @@ function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field):
   const applyTrail = (id: 'offroad' | 'hiking' | 'mtb', on: boolean) => {
     globe.setTrailLayer(id, on);
     trailItems[id].classList.toggle('is-active', on);
+    trailItems[id].classList.toggle('is-busy', on);
     updateLegend();
   };
+  // Surface load state so a toggle is never a silent no-op.
+  globe.onTrailStatus((id, status, count) => {
+    if (status !== 'loading') trailItems[id].classList.remove('is-busy');
+    if (status === 'empty') toast(shell, `No ${trailLabel[id].toLowerCase()} trails in view — zoom in on a trail area`);
+    else if (status === 'error') toast(shell, `Couldn't load ${trailLabel[id].toLowerCase()} trails — try again`);
+    else if (status === 'done') toast(shell, `${trailLabel[id]} trails loaded (${count})`);
+  });
   (['offroad', 'hiking', 'mtb'] as const).forEach((id) => {
     if (localStorage.getItem(`nomos:trail:${id}`) === 'on') applyTrail(id, true);
     trailItems[id].addEventListener('click', () => {
       const next = !trailItems[id].classList.contains('is-active');
       localStorage.setItem(`nomos:trail:${id}`, next ? 'on' : 'off');
       applyTrail(id, next);
-      toast(shell, `${trailLabel[id]} ${next ? 'on' : 'off'}`);
+      if (!next) toast(shell, `${trailLabel[id]} trails off`);
       closeMenu();
     });
   });

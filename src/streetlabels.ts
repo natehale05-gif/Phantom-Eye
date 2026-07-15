@@ -11,13 +11,15 @@ import * as Cesium from 'cesium';
 const ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
 
 // Only show labels when the camera is near the ground (metres of altitude).
-const MIN_ALTITUDE = 40;
-const MAX_ALTITUDE = 2600;
-const MAX_LABELS = 60;
+const MIN_ALTITUDE = 30;
+const MAX_ALTITUDE = 6500;
+const MAX_SPAN_DEG = 0.45;
+const MAX_LABELS = 70;
 
 interface OverpassWay {
   type: string;
@@ -94,7 +96,7 @@ export class StreetLabels {
     const n = Cesium.Math.toDegrees(rect.north);
     const e = Cesium.Math.toDegrees(rect.east);
     // Guard against huge (whole-globe) rectangles.
-    if (n - s > 0.25 || e - w > 0.25) return;
+    if (n - s > MAX_SPAN_DEG || e - w > MAX_SPAN_DEG) return;
 
     const key = `${s.toFixed(2)},${w.toFixed(2)},${n.toFixed(2)},${e.toFixed(2)}`;
     if (key === this.lastKey) return;
@@ -131,6 +133,7 @@ export class StreetLabels {
         const timer = setTimeout(() => controller.abort(), 12000);
         const res = await fetch(endpoint, {
           method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: `data=${encodeURIComponent(query)}`,
           signal: controller.signal,
         });
