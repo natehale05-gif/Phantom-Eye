@@ -6,6 +6,7 @@ import { Navigator, toast } from './navigation';
 import { Field } from './field';
 import { searchPlaces, type PlaceResult } from './geocode';
 import { searchNearby, fetchPlaceDetails } from './nearby';
+import { formatDistance, haversine } from './routing';
 import { parseOpeningHours } from './hours';
 import { categoryById } from './categories';
 import { hasToken, setStoredToken, clearStoredToken, getActiveToken } from './config';
@@ -129,11 +130,28 @@ function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field):
   // Selecting a pin on the globe opens its card.
   globe.onPlaceTap((place) => {
     globe.focusPlace(place);
-    showPlaceCard(shell, nav, place);
+    showPlaceCard(shell, nav, field, place);
   });
 
   wireSearch(shell, globe, nav, field);
   wireCategories(shell, globe, nav, field);
+  wireMapControls(shell, globe, field);
+}
+
+function wireMapControls(shell: Shell, globe: Globe, field: Field): void {
+  shell.ctrlZoomIn.addEventListener('click', () => globe.zoomIn());
+  shell.ctrlZoomOut.addEventListener('click', () => globe.zoomOut());
+  shell.ctrlTilt.addEventListener('click', () => globe.toggleTilt());
+  shell.ctrlLocate.addEventListener('click', () => field.recenter());
+  shell.ctrlCompass.addEventListener('click', () => globe.resetNorth());
+
+  // Keep the compass needle pointing to true north as the camera turns.
+  const needle = shell.ctrlCompass.querySelector('svg') as SVGElement | null;
+  const spin = () => {
+    if (needle) needle.style.transform = `rotate(${-globe.headingDeg()}deg)`;
+  };
+  globe.onCameraChange(spin);
+  spin();
 }
 
 const dirIcon =
@@ -183,13 +201,15 @@ function renderResults(
   shell.searchResults.classList.add('is-open');
 }
 
-function selectFromSearch(shell: Shell, globe: Globe, nav: Navigator, r: PlaceResult): void {
+function selectFromSearch(shell: Shell, globe: Globe, nav: Navigator, field: Field, r: PlaceResult): void {
+  rememberRecent(r);
   globe.showPlaces([r]);
   globe.focusPlace(r);
-  showPlaceCard(shell, nav, r);
+  showPlaceCard(shell, nav, field, r);
 }
 
 function startDirections(shell: Shell, nav: Navigator, r: PlaceResult): void {
+  rememberRecent(r);
   hidePlaceCard(shell);
   void nav.directionsTo([r.lon, r.lat], r.name);
 }
@@ -220,7 +240,7 @@ function wireSearch(shell: Shell, globe: Globe, nav: Navigator, field: Field): v
       renderResults(
         shell,
         results,
-        (r) => selectFromSearch(shell, globe, nav, r),
+        (r) => selectFromSearch(shell, globe, nav, field, r),
         (r) => startDirections(shell, nav, r),
       );
     } catch {
@@ -236,17 +256,20 @@ function wireSearch(shell: Shell, globe: Globe, nav: Navigator, field: Field): v
     const value = shell.searchInput.value;
     if (value.trim().length < 2) {
       lastResults = [];
-      collapseSearch(shell);
+      showHomeList(shell, globe, nav, field);
       return;
     }
     for (const c of shell.categories.querySelectorAll('.chip')) c.classList.remove('is-active');
     renderLoading(); // instant feedback while the query is in flight
     debounce = window.setTimeout(() => void run(value), 180);
   });
+  shell.searchInput.addEventListener('focus', () => {
+    if (shell.searchInput.value.trim().length < 2) showHomeList(shell, globe, nav, field);
+  });
   shell.searchInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       if (lastResults.length) {
-        selectFromSearch(shell, globe, nav, lastResults[0]);
+        selectFromSearch(shell, globe, nav, field, lastResults[0]);
         collapseSearch(shell);
         shell.searchInput.blur();
       }
@@ -261,6 +284,85 @@ function wireSearch(shell: Shell, globe: Globe, nav: Navigator, field: Field): v
     const t = e.target as HTMLElement;
     if (!t.closest('.search-bar') && !t.closest('.categories')) collapseSearch(shell);
   });
+}
+
+/** Recents + favorites shown when the search field is focused but empty. */
+function showHomeList(shell: Shell, globe: Globe, nav: Navigator, field: Field): void {
+  const recents = loadRecents();
+  const favorites = field.listWaypoints();
+  if (recents.length === 0 && favorites.length === 0) {
+    collapseSearch(shell);
+    return;
+  }
+
+  shell.searchResults.replaceChildren();
+
+  const section = (title: string) =>
+    shell.searchResults.append(el('div', { class: 'search-section', textContent: title }));
+
+  const row = (name: string, detail: string, icon: string, onGo: () => void) => {
+    const textCol = el('span', { class: 'search-result-textcol' }, [
+      el('span', { class: 'search-result-name', textContent: name }),
+      detail ? el('span', { class: 'search-result-detail', textContent: detail }) : el('span'),
+    ]);
+    const label = el('button', { class: 'search-result-main has-lead', type: 'button' }, [
+      el('span', { class: 'search-result-lead', innerHTML: icon }),
+      textCol,
+    ]);
+    label.addEventListener('click', () => {
+      onGo();
+      collapseSearch(shell);
+      shell.searchInput.blur();
+    });
+    shell.searchResults.append(el('div', { class: 'search-result' }, [label]));
+  };
+
+  if (recents.length) {
+    section('Recents');
+    for (const r of recents) {
+      row(r.name, r.detail, homeIcons.clock, () => selectFromSearch(shell, globe, nav, field, r));
+    }
+  }
+  if (favorites.length) {
+    section('Favorites');
+    for (const f of favorites) {
+      row(f.label, 'Saved place', homeIcons.star, () => {
+        globe.flyToLonLat(f.lon, f.lat, 500, 0, -45, 2.6);
+      });
+    }
+  }
+  shell.searchResults.classList.add('is-open');
+}
+
+const homeIcons = {
+  clock:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  star:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 17l-5.2 2.7 1-5.9-4.3-4.1 5.9-.8Z"/></svg>',
+};
+
+// ---------- Recents (localStorage) ----------
+
+const RECENTS_KEY = 'phantom-eye.recents';
+
+function loadRecents(): PlaceResult[] {
+  try {
+    const raw = localStorage.getItem(RECENTS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.slice(0, 8) : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberRecent(r: PlaceResult): void {
+  try {
+    const list = loadRecents().filter((p) => !(p.lon === r.lon && p.lat === r.lat));
+    list.unshift(r);
+    localStorage.setItem(RECENTS_KEY, JSON.stringify(list.slice(0, 8)));
+  } catch {
+    /* ignore private-mode storage failures */
+  }
 }
 
 function wireCategories(shell: Shell, globe: Globe, nav: Navigator, field: Field): void {
@@ -293,7 +395,7 @@ function wireCategories(shell: Shell, globe: Globe, nav: Navigator, field: Field
         results,
         (r) => {
           globe.focusPlace(r);
-          showPlaceCard(shell, nav, r);
+          showPlaceCard(shell, nav, field, r);
         },
         (r) => startDirections(shell, nav, r),
       );
@@ -310,10 +412,13 @@ function wireCategories(shell: Shell, globe: Globe, nav: Navigator, field: Field
 
 let cardToken = 0;
 
-function showPlaceCard(shell: Shell, nav: Navigator, place: PlacePin): void {
+function showPlaceCard(shell: Shell, nav: Navigator, field: Field, place: PlacePin): void {
   const token = ++cardToken;
   const cat = categoryById(place.categoryId);
-  const subtitle = place.detail || cat?.label || 'Dropped pin';
+  const parts = [place.detail || cat?.label || 'Dropped pin'];
+  const origin = field.lastLonLat();
+  if (origin) parts.push(formatDistance(haversine(origin, [place.lon, place.lat])));
+  const subtitle = parts.filter(Boolean).join('  ·  ');
 
   const close = el('button', { class: 'place-card-close', type: 'button', innerHTML: '&times;' });
   close.addEventListener('click', () => hidePlaceCard(shell));
@@ -329,6 +434,14 @@ function showPlaceCard(shell: Shell, nav: Navigator, place: PlacePin): void {
     void nav.directionsTo([place.lon, place.lat], place.name);
   });
 
+  // Secondary actions: Favorite + Share, Apple-style circular buttons.
+  const favorite = actionButton(cardIcons.star, 'Favorite', () => {
+    field.addNamedWaypoint(place.lon, place.lat, place.name);
+    favorite.classList.add('is-done');
+  });
+  const share = actionButton(cardIcons.share, 'Share', () => sharePlace(shell, place));
+  const actions = el('div', { class: 'place-card-actions' }, [directions, favorite, share]);
+
   const card = el('div', { class: 'place-card glass' }, [
     el('div', { class: 'place-card-head' }, [
       el('div', { class: 'place-card-text' }, [
@@ -338,7 +451,7 @@ function showPlaceCard(shell: Shell, nav: Navigator, place: PlacePin): void {
       close,
     ]),
     info,
-    directions,
+    actions,
   ]);
   shell.placeCard.replaceChildren(card);
   shell.placeCard.classList.add('is-visible');
@@ -346,6 +459,37 @@ function showPlaceCard(shell: Shell, nav: Navigator, place: PlacePin): void {
   renderCardInfo(info, place);
   void enrichPlaceCard(info, place, token);
 }
+
+function actionButton(icon: string, label: string, onClick: () => void): HTMLButtonElement {
+  const btn = el('button', { class: 'place-card-act', type: 'button', title: label }, [
+    el('span', { class: 'place-card-act-icon', innerHTML: icon }),
+    el('span', { class: 'place-card-act-label', textContent: label }),
+  ]) as HTMLButtonElement;
+  btn.addEventListener('click', onClick);
+  return btn;
+}
+
+async function sharePlace(shell: Shell, place: PlacePin): Promise<void> {
+  const url = `https://www.google.com/maps/search/?api=1&query=${place.lat},${place.lon}`;
+  const data = { title: place.name, text: place.name, url };
+  try {
+    if (navigator.share) {
+      await navigator.share(data);
+      return;
+    }
+    await navigator.clipboard.writeText(url);
+    toast(shell, 'Link copied to clipboard');
+  } catch {
+    /* user dismissed the share sheet */
+  }
+}
+
+const cardIcons = {
+  star:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 17l-5.2 2.7 1-5.9-4.3-4.1 5.9-.8Z"/></svg>',
+  share:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4"/><path d="M8 8l4-4 4 4"/><path d="M6 12v6a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-6"/></svg>',
+};
 
 /** Fill the info section (hours, phone, website, address) from what we have. */
 function renderCardInfo(info: HTMLElement, place: PlacePin): void {

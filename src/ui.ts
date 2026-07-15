@@ -39,6 +39,12 @@ export interface Shell {
   guidance: HTMLElement;
   tripBar: HTMLElement;
   hud: HTMLElement;
+  controls: HTMLElement;
+  ctrlCompass: HTMLButtonElement;
+  ctrlLocate: HTMLButtonElement;
+  ctrlZoomIn: HTMLButtonElement;
+  ctrlZoomOut: HTMLButtonElement;
+  ctrlTilt: HTMLButtonElement;
   loading: HTMLElement;
   loadingLabel: HTMLElement;
 }
@@ -122,6 +128,21 @@ export function buildShell(mount: HTMLElement): Shell {
   const tripBar = el('div', { class: 'trip-bar' });
   const hud = el('div', { class: 'hud' });
 
+  // --- Map controls (bottom-right cluster: compass, locate, zoom, tilt) ---
+  const ctrlBtn = (cls: string, title: string, inner: string) =>
+    el('button', { class: `ctrl-btn ${cls}`, type: 'button', title, innerHTML: inner }) as HTMLButtonElement;
+  const ctrlCompass = ctrlBtn('ctrl-compass', 'Face north', icons.compass);
+  const ctrlLocate = ctrlBtn('', 'My location', icons.locate);
+  const ctrlZoomIn = ctrlBtn('', 'Zoom in', icons.plus);
+  const ctrlZoomOut = ctrlBtn('', 'Zoom out', icons.minus);
+  const ctrlTilt = ctrlBtn('', '2D / 3D', icons.cube);
+  const controls = el('div', { class: 'controls' }, [
+    ctrlCompass,
+    el('div', { class: 'ctrl-group glass' }, [ctrlZoomIn, el('div', { class: 'ctrl-div' }), ctrlZoomOut]),
+    ctrlTilt,
+    ctrlLocate,
+  ]);
+
   // --- Loading ---
   const loadingLabel = el('div', { class: 'loading-label', textContent: 'Loading' });
   const loading = el('div', { class: 'loading' }, [
@@ -139,6 +160,7 @@ export function buildShell(mount: HTMLElement): Shell {
     guidance,
     tripBar,
     hud,
+    controls,
     creditContainer,
     loading,
   ]);
@@ -165,6 +187,12 @@ export function buildShell(mount: HTMLElement): Shell {
     guidance,
     tripBar,
     hud,
+    controls,
+    ctrlCompass,
+    ctrlLocate,
+    ctrlZoomIn,
+    ctrlZoomOut,
+    ctrlTilt,
     loading,
     loadingLabel,
   };
@@ -238,6 +266,20 @@ const icons = {
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none"/></svg>`,
   directions:
     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 2 22 12 12 22 2 12Z"/><path d="M9 13v-2a2 2 0 0 1 2-2h4"/><path d="M13 6l3 3-3 3"/></svg>`,
+  compass:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9.2"/><path d="M12 5.5 14.4 12 12 18.5 9.6 12 Z" fill="#FF453A" stroke="none"/><path d="M12 12 9.6 12 12 18.5 Z" fill="#c9ccd1" stroke="none"/></svg>`,
+  plus:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="6" x2="12" y2="18"/><line x1="6" y1="12" x2="18" y2="12"/></svg>`,
+  minus:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="12" x2="18" y2="12"/></svg>`,
+  cube:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 3 21 8v8l-9 5-9-5V8Z"/><path d="M12 3v9m0 0 9-4m-9 4-9-4"/></svg>`,
+  share:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V4"/><path d="M8 8l4-4 4 4"/><path d="M6 12v6a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-6"/></svg>`,
+  star:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.9L12 17l-5.2 2.7 1-5.9-4.3-4.1 5.9-.8Z"/></svg>`,
+  clock:
+    `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>`,
   maneuver: {
     depart: arrow('<circle cx="12" cy="12" r="4"/>'),
     straight: arrow('<line x1="12" y1="20" x2="12" y2="5"/><path d="M6 11l6-6 6 6"/>'),

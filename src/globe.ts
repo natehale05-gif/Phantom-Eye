@@ -205,6 +205,56 @@ export class Globe {
     });
   }
 
+  // ---------- Map controls (compass / zoom / tilt) ----------
+
+  /** Current camera heading in degrees (0 = north up). */
+  headingDeg(): number {
+    return Cesium.Math.toDegrees(this.viewer.camera.heading);
+  }
+
+  /** Subscribe to camera moves (used to spin the compass needle). */
+  onCameraChange(cb: () => void): void {
+    this.viewer.camera.percentageChanged = 0.02;
+    this.viewer.camera.changed.addEventListener(cb);
+  }
+
+  zoomIn(): void {
+    this.viewer.camera.zoomIn(this.zoomStep());
+    this.viewer.scene.requestRender();
+  }
+
+  zoomOut(): void {
+    this.viewer.camera.zoomOut(this.zoomStep());
+    this.viewer.scene.requestRender();
+  }
+
+  private zoomStep(): number {
+    const h = this.viewer.camera.positionCartographic?.height ?? 1000;
+    return Cesium.Math.clamp(h * 0.35, 5, 6_000_000);
+  }
+
+  /** Rotate the view back to north-up, keeping the current pitch and target. */
+  resetNorth(): void {
+    this.setFollow(false);
+    const camera = this.viewer.camera;
+    camera.flyTo({
+      destination: camera.positionWC.clone(),
+      orientation: { heading: 0, pitch: camera.pitch, roll: 0 },
+      duration: 0.6,
+    });
+  }
+
+  /** Toggle between a tilted 3D view and a near-top-down "2D" view. */
+  toggleTilt(): void {
+    const center = this.cameraCenterLonLat();
+    if (!center) return;
+    this.setFollow(false);
+    const height = this.viewer.camera.positionCartographic?.height ?? 1500;
+    const topDown = Cesium.Math.toDegrees(this.viewer.camera.pitch) < -68;
+    const pitch = topDown ? -35 : -85;
+    this.flyToLonLat(center[0], center[1], height, this.headingDeg(), pitch, 0.8);
+  }
+
   async search(query: string): Promise<SearchResult[]> {
     if (!this.geocoder) {
       this.geocoder = new Cesium.IonGeocoderService({ scene: this.viewer.scene });
@@ -651,6 +701,10 @@ export class Globe {
    */
   showRoute(coordinates: LngLat[]): void {
     this.clearRoute();
+    this.drawSelectedRoute(coordinates);
+  }
+
+  private drawSelectedRoute(coordinates: LngLat[]): void {
     const sampled = downsample(coordinates, 300);
 
     const path = sampled.map((lonlat) => ({
@@ -673,6 +727,28 @@ export class Globe {
     const end = this.pin(path[path.length - 1].cart, Cesium.Color.fromCssColorString('#FF453A'));
     this.routeEntities.push(line, start, end);
     this.viewer.scene.requestRender();
+  }
+
+  /**
+   * Draw the selected route plus dimmed alternates (Apple-Maps style). The
+   * selected route gets the glowing accent line and start/end pins; alternates
+   * render as muted gray lines behind it.
+   */
+  showRouteWithAlternates(selected: LngLat[], others: LngLat[][]): void {
+    this.clearRoute();
+    for (const alt of others) {
+      const positions = downsample(alt, 300).map((c) => Cesium.Cartesian3.fromDegrees(c[0], c[1], 3));
+      const line = this.viewer.entities.add({
+        polyline: {
+          positions,
+          width: 7,
+          material: new Cesium.ColorMaterialProperty(Cesium.Color.fromCssColorString('#8E8E93').withAlpha(0.55)),
+          depthFailMaterial: new Cesium.ColorMaterialProperty(Cesium.Color.fromCssColorString('#8E8E93').withAlpha(0.32)),
+        },
+      });
+      this.routeEntities.push(line);
+    }
+    this.drawSelectedRoute(selected);
   }
 
   private pin(position: Cesium.Cartesian3, color: Cesium.Color): Cesium.Entity {

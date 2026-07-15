@@ -39,23 +39,34 @@ export interface Route {
   duration: number; // seconds
 }
 
-export type TravelProfile = 'driving' | 'walking' | 'cycling';
+export type TravelMode = 'driving' | 'walking' | 'cycling';
 
-const OSRM_PROFILE: Record<TravelProfile, string> = {
-  driving: 'car',
-  walking: 'foot',
-  cycling: 'bike',
+/**
+ * Average speeds (m/s) used to estimate walking/cycling time. The public OSRM
+ * demo only serves the driving network, so for walk/cycle we reuse the road
+ * geometry and estimate duration from distance — good enough to explore with.
+ */
+const MODE_SPEED: Record<TravelMode, number> = {
+  driving: 0, // 0 = use OSRM's own duration
+  walking: 1.4, // ~5 km/h
+  cycling: 4.2, // ~15 km/h
 };
 
-export async function fetchRoute(
-  start: LngLat,
-  end: LngLat,
-  profile: TravelProfile = 'driving',
-): Promise<Route> {
+/** Duration (seconds) for a route travelled in the given mode. */
+export function durationForMode(route: Route, mode: TravelMode): number {
+  const speed = MODE_SPEED[mode];
+  return speed > 0 ? route.distance / speed : route.duration;
+}
+
+/**
+ * Fetch one or more candidate routes (the first is the primary; the rest are
+ * alternates, Apple-Maps style). Driving geometry from the OSRM demo server.
+ */
+export async function fetchRoutes(start: LngLat, end: LngLat): Promise<Route[]> {
   const coords = `${start[0]},${start[1]};${end[0]},${end[1]}`;
   const url =
-    `https://router.project-osrm.org/route/v1/${OSRM_PROFILE[profile]}/${coords}` +
-    `?overview=full&geometries=geojson&steps=true`;
+    `https://router.project-osrm.org/route/v1/driving/${coords}` +
+    `?overview=full&geometries=geojson&steps=true&alternatives=3`;
 
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Routing failed (${res.status})`);
@@ -63,8 +74,22 @@ export async function fetchRoute(
   if (data.code !== 'Ok' || !data.routes?.length) {
     throw new Error('No route found');
   }
+  return data.routes.map(parseRoute);
+}
 
-  const route = data.routes[0];
+/** Backwards-compatible single-route fetch. */
+export async function fetchRoute(start: LngLat, end: LngLat): Promise<Route> {
+  return (await fetchRoutes(start, end))[0];
+}
+
+interface OsrmRoute {
+  geometry: { coordinates: LngLat[] };
+  legs?: { steps?: { name?: string; distance?: number; maneuver: { type?: string; modifier?: string; location: LngLat } }[] }[];
+  distance?: number;
+  duration?: number;
+}
+
+function parseRoute(route: OsrmRoute): Route {
   const coordinates: LngLat[] = route.geometry.coordinates;
   const steps: RouteStep[] = [];
   for (const leg of route.legs ?? []) {
@@ -78,7 +103,6 @@ export async function fetchRoute(
       });
     }
   }
-
   return {
     coordinates,
     steps,

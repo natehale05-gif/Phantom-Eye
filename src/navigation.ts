@@ -4,27 +4,46 @@ import { el, maneuverIcon } from './ui';
 import { bearingDeg, type LngLat } from './geo';
 import { getFix, type Fix } from './geoloc';
 import {
-  fetchRoute,
+  fetchRoutes,
+  durationForMode,
   formatDistance,
   formatDuration,
   haversine,
   type Route,
   type RouteStep,
+  type TravelMode,
 } from './routing';
 
 type NavState = 'idle' | 'planning' | 'guiding';
 
+const MODE_LABELS: { id: TravelMode; label: string; icon: string }[] = [
+  { id: 'driving', label: 'Drive', icon: modeIcon('car') },
+  { id: 'walking', label: 'Walk', icon: modeIcon('walk') },
+  { id: 'cycling', label: 'Cycle', icon: modeIcon('bike') },
+];
+
 export class Navigator {
   private state: NavState = 'idle';
-  private route?: Route;
+
+  // Candidate routes (index 0 is the currently selected route).
+  private routes: Route[] = [];
+  private routeIdx = 0;
+  private mode: TravelMode = 'driving';
+  private destName = '';
+  private dest: LngLat | null = null;
+
   private stepIndex = 0;
 
-  // Route geometry for GPS-driven progress along the path.
+  // Geometry of the selected route for GPS-driven progress along the path.
   private coords: LngLat[] = [];
   private cum: number[] = [];
   private stepAlong: number[] = [];
   private total = 0;
   private arrived = false;
+
+  // Off-route rerouting.
+  private rerouting = false;
+  private lastReroute = 0;
 
   constructor(
     private readonly shell: Shell,
@@ -37,8 +56,12 @@ export class Navigator {
     return this.state !== 'idle';
   }
 
+  private get route(): Route | undefined {
+    return this.routes[this.routeIdx];
+  }
+
   async directionsTo(destination: LngLat, destName: string): Promise<void> {
-    this.toast('Finding a route…', 900);
+    this.toast('Finding routes…', 900);
     let origin = this.originProvider?.() ?? null;
     if (!origin) origin = await this.tryLocateQuietly();
     if (!origin) origin = this.globe.cameraCenterLonLat();
@@ -48,57 +71,122 @@ export class Navigator {
     }
 
     try {
-      const route = await fetchRoute(origin, destination, 'driving');
-      this.route = route;
-      this.stepIndex = 0;
+      const routes = await fetchRoutes(origin, destination);
+      this.routes = routes;
+      this.routeIdx = 0;
+      this.dest = destination;
+      this.destName = destName;
       this.arrived = false;
-      this.coords = route.coordinates;
-      this.cum = cumulative(route.coordinates);
-      this.total = this.cum[this.cum.length - 1] || route.distance;
-      this.stepAlong = route.steps.map((s) => projectOnRoute(s.location, this.coords, this.cum).along);
+      this.useRoute(0);
       this.globe.updateLocation({ lon: origin[0], lat: origin[1] });
-      // The route draws its own start/end pins, so drop the search markers.
       this.globe.clearPlaces();
-      this.globe.showRoute(route.coordinates);
-      this.renderPlanning(destName, route);
+      this.drawRoutes();
+      this.renderPlanning();
       this.setState('planning');
       this.globe.frameRoute();
     } catch (err) {
       this.toast(
         (err as Error)?.message?.includes('No route')
-          ? 'No driving route to that place.'
+          ? 'No route to that place.'
           : 'Routing is unavailable right now.',
       );
     }
   }
 
-  private renderPlanning(destName: string, route: Route): void {
+  /** Point the geometry helpers at route `idx` and recompute along-route math. */
+  private useRoute(idx: number): void {
+    this.routeIdx = idx;
+    const route = this.routes[idx];
+    if (!route) return;
+    this.stepIndex = 0;
+    this.coords = route.coordinates;
+    this.cum = cumulative(route.coordinates);
+    this.total = this.cum[this.cum.length - 1] || route.distance;
+    this.stepAlong = route.steps.map((s) => projectOnRoute(s.location, this.coords, this.cum).along);
+  }
+
+  private drawRoutes(): void {
+    const selected = this.routes[this.routeIdx]?.coordinates ?? [];
+    const others = this.routes.filter((_, i) => i !== this.routeIdx).map((r) => r.coordinates);
+    this.globe.showRouteWithAlternates(selected, others);
+  }
+
+  // ---------- Route preview sheet ----------
+
+  private renderPlanning(): void {
+    const route = this.route;
+    if (!route) return;
+
     const close = el('button', { class: 'nav-close', type: 'button', innerHTML: '&times;' });
     close.addEventListener('click', () => this.end());
 
-    const start = el('button', { class: 'nav-start', type: 'button', textContent: 'Start' });
+    const start = el('button', { class: 'nav-start', type: 'button', textContent: 'Go' });
     start.addEventListener('click', () => this.startGuidance());
 
-    const steps = el('div', { class: 'nav-steps' });
-    for (const s of route.steps) steps.append(this.stepRow(s));
+    const modes = el('div', { class: 'nav-modes' });
+    for (const m of MODE_LABELS) {
+      const btn = el(
+        'button',
+        { class: `nav-mode ${m.id === this.mode ? 'is-active' : ''}`, type: 'button' },
+        [el('span', { class: 'nav-mode-icon', innerHTML: m.icon }), el('span', { textContent: m.label })],
+      );
+      btn.addEventListener('click', () => {
+        this.mode = m.id;
+        this.renderPlanning();
+      });
+      modes.append(btn);
+    }
 
     const sheet = el('div', { class: 'nav-sheet glass' }, [
       el('div', { class: 'nav-head' }, [
         el('div', { class: 'nav-route' }, [
-          el('div', { class: 'nav-dest', textContent: destName }),
+          el('div', { class: 'nav-dest', textContent: this.destName }),
           el('div', {
             class: 'nav-meta',
-            textContent: `${formatDuration(route.duration)} · ${formatDistance(route.distance)}`,
+            textContent: `${formatDuration(durationForMode(route, this.mode))} · ${formatDistance(route.distance)}`,
           }),
         ]),
         close,
       ]),
-      steps,
-      start,
+      modes,
     ]);
+
+    if (this.routes.length > 1) sheet.append(this.alternatesList());
+
+    const steps = el('div', { class: 'nav-steps' });
+    for (const s of route.steps) steps.append(this.stepRow(s));
+    sheet.append(steps, start);
 
     this.shell.navPanel.replaceChildren(sheet);
     this.shell.navPanel.classList.add('is-visible');
+  }
+
+  private alternatesList(): HTMLElement {
+    const fastest = Math.min(...this.routes.map((r) => durationForMode(r, this.mode)));
+    const wrap = el('div', { class: 'nav-alts' });
+    this.routes.forEach((r, i) => {
+      const secs = durationForMode(r, this.mode);
+      const row = el(
+        'button',
+        { class: `nav-alt ${i === this.routeIdx ? 'is-active' : ''}`, type: 'button' },
+        [
+          el('span', { class: 'nav-alt-time', textContent: formatDuration(secs) }),
+          el('span', { class: 'nav-alt-dist', textContent: formatDistance(r.distance) }),
+          el('span', {
+            class: 'nav-alt-tag',
+            textContent: secs === fastest ? 'Fastest' : `+${formatDuration(secs - fastest)}`,
+          }),
+        ],
+      );
+      row.addEventListener('click', () => {
+        this.useRoute(i);
+        this.drawRoutes();
+        this.renderPlanning();
+        this.globe.frameRoute();
+      });
+      wrap.append(row);
+    });
+    return wrap;
   }
 
   private stepRow(step: RouteStep): HTMLElement {
@@ -108,6 +196,8 @@ export class Navigator {
       el('div', { class: 'nav-step-dist', textContent: formatDistance(step.distance) }),
     ]);
   }
+
+  // ---------- Guidance ----------
 
   private startGuidance(): void {
     if (!this.route) return;
@@ -129,14 +219,14 @@ export class Navigator {
     if (this.state === 'guiding') this.advance(fix.lonlat, false);
   }
 
-  /**
-   * Advance guidance to the current position: pick the upcoming maneuver, update
-   * the banner + trip bar from real progress, and chase the camera along the
-   * road ahead.
-   */
   private advance(pos: LngLat, smoothCam: boolean): void {
     if (!this.route) return;
-    const { along, bearing } = projectOnRoute(pos, this.coords, this.cum);
+    const { along, bearing, offset } = projectOnRoute(pos, this.coords, this.cum);
+
+    // Wandered off the route → ask for a fresh one.
+    if (offset > 55 && !this.arrived) {
+      void this.reroute(pos);
+    }
 
     let up = this.stepAlong.findIndex((sa, i) => i > 0 && sa > along + 2);
     if (up < 0) up = this.route.steps.length - 1;
@@ -150,6 +240,25 @@ export class Navigator {
     if (remaining < 25 && !this.arrived) {
       this.arrived = true;
       this.arrive();
+    }
+  }
+
+  private async reroute(pos: LngLat): Promise<void> {
+    if (this.rerouting || !this.dest) return;
+    if (Date.now() - this.lastReroute < 5000) return;
+    this.rerouting = true;
+    this.lastReroute = Date.now();
+    try {
+      const routes = await fetchRoutes(pos, this.dest);
+      if (this.state !== 'guiding') return;
+      this.toast('Rerouting…', 1200);
+      this.routes = routes;
+      this.useRoute(0);
+      this.drawRoutes();
+    } catch {
+      /* keep the current route; try again on the next stray fix */
+    } finally {
+      this.rerouting = false;
     }
   }
 
@@ -181,12 +290,13 @@ export class Navigator {
     ]);
     this.shell.tripBar.replaceChildren(inner);
     this.shell.tripBar.classList.add('is-visible');
-    if (this.route) this.updateTripBar(this.route.distance);
+    if (this.route) this.updateTripBar(this.total);
   }
 
   private updateGuidanceContent(distanceOverride?: number): void {
     if (!this.route) return;
     const step = this.route.steps[this.stepIndex];
+    if (!step) return;
     const iconEl = this.shell.guidance.querySelector('.guidance-icon');
     const distEl = this.shell.guidance.querySelector('.guidance-dist');
     const instrEl = this.shell.guidance.querySelector('.guidance-instr');
@@ -197,7 +307,6 @@ export class Navigator {
     }
     if (instrEl) instrEl.textContent = step.instruction;
 
-    // "Then …" preview of the following maneuver, Apple-style.
     const next = this.route.steps[this.stepIndex + 1];
     const thenEl = this.shell.guidance.querySelector('.guidance-then');
     if (thenEl) {
@@ -212,8 +321,8 @@ export class Navigator {
 
   private updateTripBar(remainingMeters: number): void {
     if (!this.route) return;
-    const frac = this.route.distance > 0 ? remainingMeters / this.route.distance : 0;
-    const remainingSeconds = Math.max(0, this.route.duration * frac);
+    const frac = this.total > 0 ? remainingMeters / this.total : 0;
+    const remainingSeconds = Math.max(0, durationForMode(this.route, this.mode) * frac);
     const etaEl = this.shell.tripBar.querySelector('.trip-eta');
     const subEl = this.shell.tripBar.querySelector('.trip-sub');
     if (etaEl) etaEl.textContent = arrivalClock(remainingSeconds);
@@ -236,7 +345,8 @@ export class Navigator {
   end(): void {
     this.globe.endNavigation();
     this.globe.clearRoute();
-    this.route = undefined;
+    this.routes = [];
+    this.dest = null;
     this.stepIndex = 0;
     this.shell.root.classList.remove('is-guiding');
     this.shell.navPanel.classList.remove('is-visible');
@@ -271,16 +381,16 @@ function cumulative(coords: LngLat[]): number[] {
 }
 
 /**
- * Project a point onto the route: returns how far along the route it is
- * (meters) and the heading of the road there. Uses a local equirectangular
- * approximation, which is accurate over the short spans between vertices.
+ * Project a point onto the route: how far along it is (meters), the heading of
+ * the road there, and how far off the route the point is (meters). Uses a local
+ * equirectangular approximation, accurate over the short spans between vertices.
  */
 function projectOnRoute(
   pos: LngLat,
   coords: LngLat[],
   cum: number[],
-): { along: number; bearing: number } {
-  if (coords.length < 2) return { along: 0, bearing: 0 };
+): { along: number; bearing: number; offset: number } {
+  if (coords.length < 2) return { along: 0, bearing: 0, offset: 0 };
   const kx = Math.cos((pos[1] * Math.PI) / 180);
   const xy = (p: LngLat): [number, number] => [(p[0] - pos[0]) * kx, p[1] - pos[1]];
 
@@ -304,13 +414,24 @@ function projectOnRoute(
       bestAlong = cum[i] + t * (cum[i + 1] - cum[i]);
     }
   }
-  return { along: bestAlong, bearing: bearingDeg(coords[bestSeg], coords[bestSeg + 1]) };
+  // best is in squared degrees-of-latitude units → convert to meters.
+  const offset = Math.sqrt(best) * 111_320;
+  return { along: bestAlong, bearing: bearingDeg(coords[bestSeg], coords[bestSeg + 1]), offset };
 }
 
 /** Clock time of arrival, e.g. "3:45 PM", given seconds remaining. */
 function arrivalClock(remainingSeconds: number): string {
   const at = new Date(Date.now() + remainingSeconds * 1000);
   return at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function modeIcon(kind: 'car' | 'walk' | 'bike'): string {
+  const body = {
+    car: '<path d="M5 16l1.5-5A2 2 0 0 1 8.4 9.6h7.2a2 2 0 0 1 1.9 1.4L19 16"/><rect x="4" y="16" width="16" height="3" rx="1.2"/><circle cx="8" cy="19.5" r="1.3"/><circle cx="16" cy="19.5" r="1.3"/>',
+    walk: '<circle cx="13" cy="4.5" r="1.6"/><path d="M13 8l-3 4 2 2v5"/><path d="M12 14l3-1 2 3"/><path d="M10 12l-2 2"/>',
+    bike: '<circle cx="6" cy="17" r="3.2"/><circle cx="18" cy="17" r="3.2"/><path d="M6 17l4-6h5l-3 6"/><path d="M10 11l2-3h3"/>',
+  }[kind];
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
 }
 
 /** Small transient message near the bottom of the screen. */

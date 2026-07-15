@@ -138,17 +138,22 @@ export class Field {
       toast(this.shell, 'Pan to a spot first, then drop a waypoint.');
       return;
     }
-    const wp: Waypoint = {
-      id: `wp-${Date.now().toString(36)}`,
-      lon: at[0],
-      lat: at[1],
-      label: `Waypoint ${this.waypoints.length + 1}`,
-    };
+    this.addNamedWaypoint(at[0], at[1], `Waypoint ${this.waypoints.length + 1}`);
+  }
+
+  /** Save a named place as a favorite waypoint (used by the place card). */
+  addNamedWaypoint(lon: number, lat: number, label: string): void {
+    const wp: Waypoint = { id: `wp-${Date.now().toString(36)}`, lon, lat, label };
     this.waypoints.push(wp);
     saveWaypoints(this.waypoints);
     this.globe.addWaypoint(wp.id, wp.lon, wp.lat, wp.label);
     toast(this.shell, `Saved ${wp.label}`);
     if (this.waypointsOpen) this.renderWaypoints();
+  }
+
+  /** Saved favorites, most-recent first (used by the search home list). */
+  listWaypoints(): { lon: number; lat: number; label: string }[] {
+    return this.waypoints.map((w) => ({ lon: w.lon, lat: w.lat, label: w.label })).reverse();
   }
 
   toggleWaypoints(): void {
