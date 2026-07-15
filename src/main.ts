@@ -17,6 +17,9 @@ import { hasToken, setStoredToken, clearStoredToken, getActiveToken } from './co
 const mount = document.getElementById('app');
 if (!mount) throw new Error('Missing #app mount point');
 
+// Declared before boot() runs (boot is invoked during module init and assigns it).
+let weather: WeatherPage | null = null;
+
 if (hasToken()) {
   boot(mount);
 } else {
@@ -83,6 +86,11 @@ async function boot(root: HTMLElement): Promise<void> {
   // camera can fly to (and follow) the user the moment both are ready — the
   // boot never stalls waiting on the location prompt.
   const locating = field.locateOnBoot();
+  // Paint the weather chip as soon as we have a location, independent of tiles.
+  void locating.then((ok) => {
+    const at = ok ? field.lastLonLat() : null;
+    if (at) void updateWeatherChip(shell, at[1], at[0]);
+  });
 
   try {
     setLoading(shell, true, 'Loading photoreal tiles');
@@ -90,8 +98,6 @@ async function boot(root: HTMLElement): Promise<void> {
     setLoading(shell, false);
     const located = await locating;
     if (!located) globe.flyToPlace(PLACES[0], 4.2);
-    const at = field.lastLonLat();
-    if (at) void updateWeatherChip(shell, at[1], at[0]);
   } catch (err) {
     handleTokenFailure(root, err);
   }
@@ -145,7 +151,6 @@ function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field):
   wireMapControls(shell, globe, field);
 }
 
-let weather: WeatherPage | null = null;
 let chipToken = 0;
 let lastChipAt = 0;
 
