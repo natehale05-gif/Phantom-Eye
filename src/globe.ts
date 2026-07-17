@@ -13,6 +13,8 @@ export interface PlacePin {
   lon: number;
   lat: number;
   categoryId?: string;
+  /** Raw OSM tag value (e.g. "fuel") — set on places found by name search. */
+  category?: string;
   osmType?: 'node' | 'way' | 'relation';
   osmId?: number;
   phone?: string;

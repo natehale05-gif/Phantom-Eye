@@ -1260,6 +1260,74 @@ button {
   color: #ff453a;
 }
 
+.place-gas-price {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.place-gas-price-value {
+  font-weight: 600;
+  color: var(--text);
+}
+.place-gas-price-meta {
+  color: var(--text-dim);
+}
+.place-gas-price-edit {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+}
+.place-gas-price-edit:hover {
+  text-decoration: underline;
+}
+.place-gas-price-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.place-gas-price-input {
+  width: 84px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid var(--glass-stroke);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.3s var(--ease), box-shadow 0.3s var(--ease);
+}
+.place-gas-price-input:focus {
+  border-color: rgba(10, 132, 255, 0.7);
+  box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.28);
+}
+.place-gas-price-save,
+.place-gas-price-cancel {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: none;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.place-gas-price-save {
+  background: var(--accent);
+  color: #fff;
+}
+.place-gas-price-save:hover {
+  filter: brightness(1.08);
+}
+.place-gas-price-cancel {
+  background: rgba(120, 120, 128, 0.22);
+  color: var(--text);
+}
+
 /* Apple-Maps-style row of round action buttons. */
 .place-card-actions {
   display: flex;

@@ -14,6 +14,7 @@ import { fetchCurrentBrief, wmo } from './weather';
 import { weatherIcon } from './weathericons';
 import { hasToken, setStoredToken, clearStoredToken, getActiveToken } from './config';
 import { registerServiceWorker, downloadCurrentArea } from './offline';
+import { getGasPrice, reportGasPrice, formatPrice, formatRelativeTime, type GasPriceReport } from './gasprices';
 
 registerServiceWorker();
 
@@ -730,9 +731,18 @@ const cardIcons = {
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16c4 0 4-2 8-2s4 2 8 2"/><path d="M3 20c4 0 4-2 8-2s4 2 8 2"/><path d="M14 4c3 3 3 7 0 10"/></svg>',
 };
 
+/** True for gas stations found either via the "Gas" category chip or by name search. */
+function isGasStation(place: PlacePin): boolean {
+  return place.categoryId === 'gas' || place.category === 'fuel';
+}
+
 /** Fill the info section (hours, phone, website, address) from what we have. */
 function renderCardInfo(info: HTMLElement, place: PlacePin, isMarked = false): void {
   const rows: HTMLElement[] = [];
+
+  if (isGasStation(place)) {
+    rows.push(gasPriceRow(place));
+  }
 
   if (place.openingHours) {
     const { openNow, today } = parseOpeningHours(place.openingHours);
@@ -791,6 +801,61 @@ function formatLatLon(lat: number, lon: number): string {
   return `${Math.abs(lat).toFixed(5)}° ${ns}, ${Math.abs(lon).toFixed(5)}° ${ew}`;
 }
 
+/** The "current price" row on a gas station's place card, with a tap-to-report editor. */
+function gasPriceRow(place: PlacePin): HTMLElement {
+  const valueEl = el('div', { class: 'place-info-text place-gas-price' });
+  const row = el('div', { class: 'place-info-row' }, [
+    el('span', { class: 'place-info-icon', innerHTML: infoIcons.gas }),
+    valueEl,
+  ]);
+
+  const showDisplay = (report: GasPriceReport | null) => {
+    const parts: (Node | string)[] = report
+      ? [
+          el('span', { class: 'place-gas-price-value', textContent: formatPrice(report.price) }),
+          el('span', { class: 'place-gas-price-meta', textContent: ` · reported ${formatRelativeTime(report.reportedAt)}` }),
+        ]
+      : [el('span', { class: 'place-gas-price-meta', textContent: 'No price reported yet' })];
+    const editBtn = el('button', {
+      class: 'place-gas-price-edit',
+      type: 'button',
+      textContent: report ? 'Update' : 'Report price',
+    });
+    editBtn.addEventListener('click', () => showForm(report));
+    valueEl.replaceChildren(...parts, editBtn);
+  };
+
+  const showForm = (current: GasPriceReport | null) => {
+    const input = el('input', {
+      class: 'place-gas-price-input',
+      type: 'number',
+      step: '0.01',
+      min: '0',
+      placeholder: current ? current.price.toFixed(2) : '3.29',
+    }) as HTMLInputElement;
+    const save = el('button', { class: 'place-gas-price-save', type: 'button', textContent: 'Save' });
+    const cancel = el('button', { class: 'place-gas-price-cancel', type: 'button', textContent: 'Cancel' });
+    save.addEventListener('click', () => {
+      const price = parseFloat(input.value);
+      if (Number.isNaN(price) || price < 0) {
+        input.focus();
+        return;
+      }
+      showDisplay(reportGasPrice(place, price));
+    });
+    cancel.addEventListener('click', () => showDisplay(current));
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') save.click();
+      if (e.key === 'Escape') cancel.click();
+    });
+    valueEl.replaceChildren(el('div', { class: 'place-gas-price-form' }, [input, save, cancel]));
+    requestAnimationFrame(() => input.focus());
+  };
+
+  showDisplay(getGasPrice(place));
+  return row;
+}
+
 async function enrichPlaceCard(place: PlacePin, token: number, render: () => void): Promise<void> {
   const needsInfo = !place.openingHours && !place.phone && !place.website;
   if (!needsInfo || !place.osmType || !place.osmId) return;
@@ -833,6 +898,8 @@ const infoIcons = {
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><line x1="3" y1="12" x2="21" y2="12"/></svg>',
   pin:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M12 21s-6-5.7-6-10a6 6 0 0 1 12 0c0 4.3-6 10-6 10Z"/><circle cx="12" cy="11" r="2.2"/></svg>',
+  gas:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M5 21V6a2 2 0 0 1 2-2h5a2 2 0 0 1 2 2v15"/><path d="M4 21h11"/><path d="M7 9h5"/><path d="M14 9l3 3v6a2 2 0 0 0 3 0V10l-3-3"/></svg>',
 };
 
 function hidePlaceCard(shell: Shell): void {
