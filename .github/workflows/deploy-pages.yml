@@ -11,6 +11,7 @@ on:
     branches:
       - cursor/offline-maps-street-names-16d3
       - cursor/photoreal-3d-map-apple-ui-16d3
+      - claude/gas-price-tracker-ui1mpd
       - main
   workflow_dispatch:
 
