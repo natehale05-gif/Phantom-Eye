@@ -1,5 +1,6 @@
 import * as Cesium from 'cesium';
 import { overpassQuery } from './overpass';
+import { requireCameraPercentageChanged, releaseCameraPercentageChanged } from './cameraThreshold';
 
 /**
  * Apple-Maps-style street name labels. Google Photorealistic 3D Tiles ship
@@ -33,6 +34,7 @@ export class StreetLabels {
   private announce = false;
   private statusHandler?: (status: 'loading' | 'done' | 'empty' | 'error') => void;
   private readonly cache = new Map<string, { lon: number; lat: number; text: string; kind: 'road' | 'place' }[]>();
+  private controller?: AbortController;
 
   constructor(private readonly viewer: Cesium.Viewer) {
     // `scene` is REQUIRED for labels that clamp to the ground/terrain — without
@@ -54,12 +56,14 @@ export class StreetLabels {
       this.announce = true; // surface the outcome of this (re)enable to the user
       if (!this.removeListener) {
         this.removeListener = this.viewer.camera.changed.addEventListener(() => this.schedule());
-        this.viewer.camera.percentageChanged = 0.25;
+        requireCameraPercentageChanged(this.viewer, 'streetLabels', 0.25);
       }
       this.schedule(200);
     } else {
       this.removeListener?.();
       this.removeListener = undefined;
+      releaseCameraPercentageChanged(this.viewer, 'streetLabels');
+      this.controller?.abort();
       this.collection.removeAll();
       this.viewer.scene.requestRender();
     }
@@ -117,8 +121,16 @@ export class StreetLabels {
     let items = this.cache.get(key);
     if (!items) {
       if (this.announce) this.statusHandler?.('loading');
-      const fetched = await this.fetchLabels(s, w, n, e);
-      if (current !== this.token) return;
+      // Cancel a still-in-flight request for a now-stale view before starting
+      // this one — otherwise continuous panning can pile up several
+      // concurrent Overpass queries whose results all get thrown away anyway.
+      this.controller?.abort();
+      const controller = new AbortController();
+      this.controller = controller;
+      const fetched = await this.fetchLabels(s, w, n, e, controller.signal);
+      // Superseded by a newer refresh, or labels were turned off (which aborts
+      // this fetch) while we were waiting — either way, not a real error.
+      if (current !== this.token || !this.enabled) return;
       if (!fetched) {
         // Leave lastKey unchanged so this view retries on the next settle.
         if (this.announce) {
@@ -144,6 +156,7 @@ export class StreetLabels {
     w: number,
     n: number,
     e: number,
+    signal: AbortSignal,
   ): Promise<{ lon: number; lat: number; text: string; kind: 'road' | 'place' }[] | null> {
     const bbox = `${s},${w},${n},${e}`;
     const query =
@@ -151,7 +164,7 @@ export class StreetLabels {
       `way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|unclassified|living_street|pedestrian)$"]["name"](${bbox});` +
       `node["place"~"^(city|town|village|suburb|neighbourhood)$"]["name"](${bbox});` +
       `);out geom ${MAX_LABELS * 4};`;
-    const data = await overpassQuery<OverpassWay>(query);
+    const data = await overpassQuery<OverpassWay>(query, { signal });
     if (!data?.elements) return null;
 
     const out: { lon: number; lat: number; text: string; kind: 'road' | 'place' }[] = [];

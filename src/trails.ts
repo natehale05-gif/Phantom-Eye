@@ -1,5 +1,6 @@
 import * as Cesium from 'cesium';
 import { overpassQuery } from './overpass';
+import { requireCameraPercentageChanged, releaseCameraPercentageChanged } from './cameraThreshold';
 
 /**
  * Trail overlays for Offroad (4x4/OHV), Hiking, and Bike — the OnX-style layers.
@@ -75,6 +76,7 @@ interface LayerState {
   token: number;
   announce: boolean;
   debounce?: number;
+  controller?: AbortController;
 }
 
 export class TrailLayers {
@@ -100,6 +102,7 @@ export class TrailLayers {
     const layer = this.layers[id];
     layer.enabled = on;
     if (!on) {
+      layer.controller?.abort();
       layer.ds.entities.removeAll();
       layer.lastKey = '';
       layer.announce = false;
@@ -109,11 +112,12 @@ export class TrailLayers {
     }
     const anyOn = Object.values(this.layers).some((l) => l.enabled);
     if (anyOn && !this.removeListener) {
-      this.viewer.camera.percentageChanged = 0.3;
+      requireCameraPercentageChanged(this.viewer, 'trails', 0.3);
       this.removeListener = this.viewer.camera.changed.addEventListener(() => this.scheduleAll());
     } else if (!anyOn && this.removeListener) {
       this.removeListener();
       this.removeListener = undefined;
+      releaseCameraPercentageChanged(this.viewer, 'trails');
     }
     if (on) this.schedule(id, 150);
   }
@@ -180,7 +184,13 @@ export class TrailLayers {
     let ways = layer.cache.get(key);
     if (!ways) {
       if (layer.announce) this.statusHandler?.(id, 'loading', 0);
-      const fetched = await this.fetchTrails(id, s, w, n, e);
+      // Cancel this layer's still-in-flight request for a now-stale view
+      // before starting a new one — continuous panning would otherwise pile
+      // up several concurrent Overpass queries whose results are all discarded.
+      layer.controller?.abort();
+      const controller = new AbortController();
+      layer.controller = controller;
+      const fetched = await this.fetchTrails(id, s, w, n, e, controller.signal);
       // A newer refresh for this layer superseded us, or it was turned off.
       if (current !== layer.token || !layer.enabled) return;
       if (!fetched) {
@@ -210,6 +220,7 @@ export class TrailLayers {
     w: number,
     n: number,
     e: number,
+    signal: AbortSignal,
   ): Promise<TrailWay[] | null> {
     const bbox = `(${s},${w},${n},${e})`;
     const body = QUERY[id](bbox);
@@ -218,7 +229,7 @@ export class TrailLayers {
     // with a 400, so normalise it here.
     const inner = body.endsWith(';') ? body : `${body};`;
     const query = `[out:json][timeout:25];(${inner});out geom ${MAX_WAYS};`;
-    const data = await overpassQuery<OverpassWay>(query);
+    const data = await overpassQuery<OverpassWay>(query, { signal });
     if (!data?.elements) return null;
 
     const grader = GRADERS[id];

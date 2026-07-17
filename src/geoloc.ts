@@ -33,22 +33,28 @@ export function getFix(): Promise<Fix> {
 }
 
 /**
- * Start watching position at the highest available accuracy. Returns a stop
- * function. `maximumAge: 0` forces fresh readings so the fix keeps tightening
- * as the GPS/Wi-Fi radios settle.
+ * Start watching position. Returns a stop function. High-accuracy mode forces
+ * a fresh GPS reading on every poll (`maximumAge: 0`) — needed while actively
+ * navigating or recording a track, but a real drain on the radio/battery (and
+ * a heat source, since each fix can force a camera-follow re-render) if left
+ * on indefinitely just for casual "where am I" use. The low-accuracy mode
+ * accepts a fix up to 15s old, which is plenty for following along at a walk
+ * or drive without demanding a brand-new radio read every time.
  */
 export function watchFixes(
   onFix: (fix: Fix) => void,
   onError?: (err: GeolocationPositionError) => void,
+  opts?: { highAccuracy?: boolean },
 ): () => void {
   if (!('geolocation' in navigator)) {
     onError?.({ code: 2, message: 'unsupported' } as GeolocationPositionError);
     return () => {};
   }
+  const highAccuracy = opts?.highAccuracy ?? true;
   const id = navigator.geolocation.watchPosition((p) => onFix(toFix(p)), onError, {
-    enableHighAccuracy: true,
+    enableHighAccuracy: highAccuracy,
     timeout: 20000,
-    maximumAge: 0,
+    maximumAge: highAccuracy ? 0 : 15000,
   });
   return () => navigator.geolocation.clearWatch(id);
 }

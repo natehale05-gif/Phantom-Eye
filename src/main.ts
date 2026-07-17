@@ -24,6 +24,11 @@ if (!mount) throw new Error('Missing #app mount point');
 // Declared before boot() runs (boot is invoked during module init and assigns it).
 let weather: WeatherPage | null = null;
 
+// Aborted at the start of every boot() so a Cesium-token retry (which re-runs
+// boot() from scratch) doesn't leave the previous attempt's document-level
+// listeners attached forever.
+let bootAbort: AbortController | undefined;
+
 if (hasToken()) {
   boot(mount);
 } else {
@@ -59,6 +64,10 @@ function showOnboarding(root: HTMLElement, message?: string): void {
 }
 
 async function boot(root: HTMLElement): Promise<void> {
+  bootAbort?.abort();
+  bootAbort = new AbortController();
+  const bootSignal = bootAbort.signal;
+
   root.replaceChildren();
   const shell = buildShell(root);
 
@@ -89,7 +98,7 @@ async function boot(root: HTMLElement): Promise<void> {
     const results = await searchNearby(cat, [lon, lat]);
     return results.map((r) => ({ name: r.name, lat: r.lat, lon: r.lon }));
   });
-  wireControls(shell, globe, nav, field);
+  wireControls(shell, globe, nav, field, bootSignal);
   wireWeather(shell, globe, field);
 
   // Request the GPS fix immediately, in parallel with tile streaming, so the
@@ -123,7 +132,7 @@ async function boot(root: HTMLElement): Promise<void> {
   }
 }
 
-function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field): void {
+function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field, signal: AbortSignal): void {
   const closeMenu = () => shell.menu.classList.remove('is-open');
 
   // Tools dropdown
@@ -132,7 +141,7 @@ function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field):
     shell.menu.classList.toggle('is-open');
   });
   shell.menu.addEventListener('click', (e) => e.stopPropagation());
-  document.addEventListener('click', closeMenu);
+  document.addEventListener('click', closeMenu, { signal });
 
   shell.menuLocate.addEventListener('click', () => {
     field.recenter();
@@ -235,7 +244,7 @@ function wireControls(shell: Shell, globe: Globe, nav: Navigator, field: Field):
     shell.searchInput.blur();
   });
 
-  wireSearch(shell, globe, nav, field);
+  wireSearch(shell, globe, nav, field, signal);
   wireCategories(shell, globe, nav, field);
   wireMapControls(shell, globe);
 }
@@ -347,7 +356,7 @@ function startDirections(shell: Shell, nav: Navigator, r: PlaceResult): void {
   void nav.directionsTo([r.lon, r.lat], r.name);
 }
 
-function wireSearch(shell: Shell, globe: Globe, nav: Navigator, field: Field): void {
+function wireSearch(shell: Shell, globe: Globe, nav: Navigator, field: Field, signal: AbortSignal): void {
   let token = 0;
   let debounce: number | undefined;
   let lastResults: PlaceResult[] = [];
@@ -436,10 +445,14 @@ function wireSearch(shell: Shell, globe: Globe, nav: Navigator, field: Field): v
     }
   });
 
-  document.addEventListener('click', (e) => {
-    const t = e.target as HTMLElement;
-    if (!t.closest('.search-bar') && !t.closest('.categories')) collapseSearch(shell);
-  });
+  document.addEventListener(
+    'click',
+    (e) => {
+      const t = e.target as HTMLElement;
+      if (!t.closest('.search-bar') && !t.closest('.categories')) collapseSearch(shell);
+    },
+    { signal },
+  );
 }
 
 /** Recents + favorites shown when the search field is focused but empty. */

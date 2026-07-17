@@ -31,6 +31,8 @@ const WAYPOINTS_KEY = 'phantom-eye.waypoints';
  */
 export class Field {
   private stopWatch?: () => void;
+  private watchingHighAccuracy = false;
+  private idleStopTimer?: number;
   private lastFix: Fix | null = null;
   private locationListeners: ((fix: Fix) => void)[] = [];
 
@@ -64,16 +66,17 @@ export class Field {
     this.locationListeners.push(cb);
   }
 
-  /** Ensure the live GPS watch is running (e.g. when guidance starts). */
+  /** Ensure the live GPS watch is running at high accuracy (guidance/recording). */
   startTracking(): void {
-    this.ensureWatching();
+    this.ensureWatching(true);
   }
 
   // ---------- Live location + follow ----------
 
   /** My-location button: start tracking and enter the follow/chase camera. */
   recenter(): void {
-    this.ensureWatching();
+    // Don't downgrade an in-progress high-accuracy watch (navigation/recording).
+    this.ensureWatching(this.nav.isActive || this.recording);
     this.shell.menuLocate.classList.add('is-busy');
     if (this.lastFix) {
       this.applyFix(this.lastFix);
@@ -89,24 +92,34 @@ export class Field {
       this.lastFix = fix;
       this.applyFix(fix);
       this.globe.setFollow(true);
-      this.ensureWatching();
+      this.ensureWatching(false);
       return true;
     } catch {
       return false;
     }
   }
 
-  private ensureWatching(): void {
-    if (this.stopWatch) return;
-    this.stopWatch = watchFixes(
+  /**
+   * Start (or switch) the live GPS watch. `highAccuracy` demands a fresh GPS
+   * reading on every poll — worth the battery/heat cost while actively
+   * navigating or recording, but not just for casual follow-along, where a
+   * fix up to 15s old is plenty (see `watchFixes` in `geoloc.ts`).
+   */
+  private ensureWatching(highAccuracy: boolean): void {
+    if (this.stopWatch && this.watchingHighAccuracy === highAccuracy) return;
+    this.stopWatch?.();
+    this.watchingHighAccuracy = highAccuracy;
+    const stop = watchFixes(
       (fix) => this.onFix(fix),
       (err) => {
         this.shell.menuLocate.classList.remove('is-busy');
         toast(this.shell, locationErrorText(err));
-        this.stopWatch?.();
-        this.stopWatch = undefined;
+        stop();
+        if (this.stopWatch === stop) this.stopWatch = undefined;
       },
+      { highAccuracy },
     );
+    this.stopWatch = stop;
   }
 
   private onFix(fix: Fix): void {
@@ -126,6 +139,31 @@ export class Field {
       this.recordLast = fix.lonlat;
       this.updateHud();
     }
+
+    this.updateIdleWatch();
+  }
+
+  /**
+   * Stop the GPS watch after a short grace period once the user isn't
+   * following, recording, or navigating — otherwise it would run for the rest
+   * of the session for no reason (a real battery/heat drain). Any of
+   * recenter()/startTracking()/startRecording() restarts it transparently.
+   */
+  private updateIdleWatch(): void {
+    const idle = !this.globe.isFollowing() && !this.recording && !this.nav.isActive;
+    if (!idle) {
+      window.clearTimeout(this.idleStopTimer);
+      this.idleStopTimer = undefined;
+      return;
+    }
+    if (this.idleStopTimer) return;
+    this.idleStopTimer = window.setTimeout(() => {
+      this.idleStopTimer = undefined;
+      if (!this.globe.isFollowing() && !this.recording && !this.nav.isActive) {
+        this.stopWatch?.();
+        this.stopWatch = undefined;
+      }
+    }, 10_000);
   }
 
   private applyFix(fix: Fix): void {
@@ -359,7 +397,7 @@ export class Field {
     this.recordLast = this.lastFix?.lonlat ?? null;
     this.globe.beginTrack();
     if (this.recordLast) void this.globe.pushTrackPoint(this.recordLast[0], this.recordLast[1]);
-    this.ensureWatching();
+    this.ensureWatching(true);
     this.setRecordUi(true);
     this.recordTimer = window.setInterval(() => this.updateHud(), 1000);
     this.updateHud();
@@ -373,6 +411,8 @@ export class Field {
     this.setRecordUi(false);
     toast(this.shell, `Track saved · ${formatDistance(this.recordDistance)}`);
     this.updateHud();
+    if (!this.nav.isActive) this.ensureWatching(false);
+    this.updateIdleWatch();
   }
 
   private setRecordUi(on: boolean): void {

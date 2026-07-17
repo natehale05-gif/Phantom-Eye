@@ -5,6 +5,7 @@ import { bearingDeg, type LngLat } from './geo';
 import { categoryById, DEFAULT_PIN_COLOR } from './categories';
 import { StreetLabels } from './streetlabels';
 import { TrailLayers, type TrailLayerId, type TrailStatus } from './trails';
+import { requireCameraPercentageChanged } from './cameraThreshold';
 
 /** A place that can be dropped as a map pin. */
 export interface PlacePin {
@@ -28,6 +29,11 @@ export interface PlacePin {
 
 /** Cesium ion asset ID for Google Photorealistic 3D Tiles (photoreal buildings + terrain). */
 const GOOGLE_PHOTOREAL_ASSET_ID = 2275207;
+
+/** Rough phone/tablet heuristic (touch + coarse pointer) used to trim GPU cost. */
+function isCoarsePointerDevice(): boolean {
+  return (navigator.maxTouchPoints ?? 0) > 0 && (window.matchMedia?.('(pointer: coarse)').matches ?? false);
+}
 
 export interface SearchResult {
   displayName: string;
@@ -119,6 +125,9 @@ export class Globe {
       // especially on phones — with no visual difference for an explorer app.
       requestRenderMode: true,
       maximumRenderTimeChange: Infinity,
+      // FXAA (enabled in tuneScene) is our anti-aliasing pass; browser MSAA on
+      // top of it is redundant per-frame GPU work, so turn the WebGL default off.
+      contextOptions: { webgl: { antialias: false } },
     });
 
     this.tuneScene();
@@ -267,14 +276,22 @@ export class Globe {
     scene.globe.show = false;
 
     if (scene.postProcessStages.fxaa) scene.postProcessStages.fxaa.enabled = true;
-    try {
-      scene.highDynamicRange = true;
-    } catch {
-      /* not supported on all GPUs */
+
+    // HDR adds a float framebuffer + tonemap pass on top of an already-heavy
+    // photoreal scene — worth it on a desktop GPU, not on a phone.
+    const mobile = isCoarsePointerDevice();
+    if (!mobile) {
+      try {
+        scene.highDynamicRange = true;
+      } catch {
+        /* not supported on all GPUs */
+      }
     }
     // Cap the render resolution: on high-DPI phones 1.5x looks crisp while
-    // rendering far fewer pixels than the native 3x, so it stays smooth.
-    this.viewer.resolutionScale = Math.min(window.devicePixelRatio || 1, 1.5);
+    // rendering far fewer pixels than the native 3x, so it stays smooth. Mobile
+    // gets a tighter cap still, since it's also paying for the photoreal tiles
+    // and follow camera on a much smaller thermal/power budget.
+    this.viewer.resolutionScale = Math.min(window.devicePixelRatio || 1, mobile ? 1.25 : 1.5);
 
     const ctrl = scene.screenSpaceCameraController;
     ctrl.enableCollisionDetection = true;
@@ -344,7 +361,7 @@ export class Globe {
 
   /** Subscribe to camera moves (used to spin the compass needle). */
   onCameraChange(cb: () => void): void {
-    this.viewer.camera.percentageChanged = 0.02;
+    requireCameraPercentageChanged(this.viewer, 'compass', 0.02);
     this.viewer.camera.changed.addEventListener(cb);
   }
 
@@ -591,7 +608,7 @@ export class Globe {
     if (!this.locationEntity) this.createLocationEntity();
     else this.locationEntity.show = true;
 
-    if (this.followActive) this.applyFollow(true);
+    this.followTick();
     this.viewer.scene.requestRender();
 
     void this.refineLocationHeight(fix.lon, fix.lat);
@@ -604,8 +621,26 @@ export class Globe {
     if (!s || s.lon !== lon || s.lat !== lat) return; // superseded by a newer fix
     s.height = h;
     s.position = Cesium.Cartesian3.fromDegrees(lon, lat, h);
-    if (this.followActive) this.applyFollow(true);
+    this.followTick();
     this.viewer.scene.requestRender();
+  }
+
+  /**
+   * Re-aim the follow camera at most once per FOLLOW_MIN_INTERVAL_MS. GPS fixes
+   * can arrive much faster than that outdoors, and each `applyFollow` forces
+   * the photoreal tileset to re-cull/re-stream at a new frustum — gating this
+   * is what keeps "follow me" from pinning the GPU/CPU (and heating the phone)
+   * for as long as the app is open.
+   */
+  private static readonly FOLLOW_MIN_INTERVAL_MS = 800;
+  private lastFollowApplyAt = 0;
+
+  private followTick(): void {
+    if (!this.followActive) return;
+    const now = performance.now();
+    if (now - this.lastFollowApplyAt < Globe.FOLLOW_MIN_INTERVAL_MS) return;
+    this.lastFollowApplyAt = now;
+    this.applyFollow(true);
   }
 
   private createLocationEntity(): void {
@@ -650,12 +685,16 @@ export class Globe {
   setFollow(on: boolean): void {
     if (on && !this.locationState) return;
     if (on === this.followActive) {
-      if (on) this.applyFollow(false);
+      if (on) {
+        this.applyFollow(false);
+        this.lastFollowApplyAt = performance.now();
+      }
       return;
     }
     this.followActive = on;
     if (on) {
       this.applyFollow(false);
+      this.lastFollowApplyAt = performance.now();
       // Any manual camera interaction drops out of follow mode.
       this.followExit = () => this.setFollow(false);
       this.viewer.canvas.addEventListener('pointerdown', this.followExit, { once: true });

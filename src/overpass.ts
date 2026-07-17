@@ -26,10 +26,21 @@ export interface OverpassResult<T> {
  * Run an Overpass QL query, racing the mirrors. Resolves with the parsed JSON,
  * or null if every mirror failed/timed out.
  */
-export async function overpassQuery<T>(query: string, timeoutMs = 25000): Promise<OverpassResult<T> | null> {
+export async function overpassQuery<T>(
+  query: string,
+  opts?: { timeoutMs?: number; signal?: AbortSignal },
+): Promise<OverpassResult<T> | null> {
+  if (opts?.signal?.aborted) return null;
+  const timeoutMs = opts?.timeoutMs ?? 25000;
   const attempts = ENDPOINTS.map((endpoint) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const onExternalAbort = () => controller.abort();
+    opts?.signal?.addEventListener('abort', onExternalAbort);
+    const cleanup = () => {
+      clearTimeout(timer);
+      opts?.signal?.removeEventListener('abort', onExternalAbort);
+    };
     return fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -37,12 +48,12 @@ export async function overpassQuery<T>(query: string, timeoutMs = 25000): Promis
       signal: controller.signal,
     }).then(
       async (res) => {
-        clearTimeout(timer);
+        cleanup();
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return (await res.json()) as OverpassResult<T>;
       },
       (err) => {
-        clearTimeout(timer);
+        cleanup();
         throw err;
       },
     );
