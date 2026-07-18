@@ -79,6 +79,14 @@ interface DrawnEntry {
   /** CSS-pixel size, unrotated (for roads: the pre-rotation text size). */
   width: number;
   height: number;
+  /**
+   * Last known surface height (metres, ellipsoidal), explicitly baked into
+   * the entity's position instead of relying on Cesium's automatic
+   * `HeightReference` clamping — the same technique the GPS location dot and
+   * drawn routes use (`scene.clampToHeight`/`clampToHeightMostDetailed`),
+   * which sticks to the photoreal 3D tiles far more reliably.
+   */
+  surfaceHeight: number;
   /** Current upright-flip state, for hysteresis in `relayout`. */
   flipped: boolean;
   label?: Cesium.Label;
@@ -98,6 +106,7 @@ export class StreetLabels {
   private readonly cache = new Map<string, LabelItem[]>();
   private controller?: AbortController;
   private entries: DrawnEntry[] = [];
+  private heightToken = 0;
 
   constructor(private readonly viewer: Cesium.Viewer) {
     // `scene` is REQUIRED for labels that clamp to the ground/terrain — without
@@ -291,6 +300,8 @@ export class StreetLabels {
     this.placeCollection.removeAll();
     this.roadBillboards.removeAll();
     this.entries = [];
+    const token = ++this.heightToken;
+    const pending: { entry: DrawnEntry; lon: number; lat: number }[] = [];
 
     for (const item of items) {
       if (item.kind === 'place') {
@@ -306,16 +317,13 @@ export class StreetLabels {
           style: Cesium.LabelStyle.FILL_AND_OUTLINE,
           verticalOrigin: Cesium.VerticalOrigin.CENTER,
           horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-          // Clamp directly to the photoreal 3D tiles so names sit on the road.
-          // CLAMP_TO_GROUND would snap to the ellipsoid (sea level), which is
-          // far below the tiles, burying the labels; CLAMP_TO_3D_TILE tracks
-          // the real surface every frame with no manual height sampling.
-          heightReference: Cesium.HeightReference.CLAMP_TO_3D_TILE,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
           scaleByDistance: new Cesium.NearFarScalar(200, 1, 3000, 0.75),
           translucencyByDistance: new Cesium.NearFarScalar(1800, 1, 3000, 0),
         });
-        this.entries.push({ item, isRoad: false, width, height, flipped: false, label });
+        const entry: DrawnEntry = { item, isRoad: false, width, height, surfaceHeight: 0, flipped: false, label };
+        this.entries.push(entry);
+        pending.push({ entry, lon: item.lon, lat: item.lat });
       } else {
         const variant: LabelVariant = item.roadClass === 'major' ? 'roadMajor' : 'roadMinor';
         const { canvas, width, height } = getLabelCanvas(item.text, variant);
@@ -325,7 +333,6 @@ export class StreetLabels {
           image: canvas,
           width,
           height,
-          heightReference: Cesium.HeightReference.CLAMP_TO_3D_TILE,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
           verticalOrigin: Cesium.VerticalOrigin.CENTER,
           horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
@@ -333,12 +340,54 @@ export class StreetLabels {
           translucencyByDistance: new Cesium.NearFarScalar(1800, 1, 3000, 0),
           alignedAxis: tangentVector(position, item.bearingDeg),
         });
-        this.entries.push({ item, isRoad: true, width, height, flipped: false, billboard });
+        const entry: DrawnEntry = { item, isRoad: true, width, height, surfaceHeight: 0, flipped: false, billboard };
+        this.entries.push(entry);
+        pending.push({ entry, lon: item.lon, lat: item.lat });
       }
     }
 
     this.relayout();
     this.viewer.scene.requestRender();
+    void this.refineInitialHeights(pending, token);
+  }
+
+  /**
+   * Bake an explicit surface height into freshly-drawn labels, the same
+   * batched `clampToHeightMostDetailed` technique already used for the GPS
+   * location dot and drawn routes — Cesium's automatic `HeightReference`
+   * clamping (the previous approach) proved unreliable against the
+   * photoreal 3D tileset and is what let road names visibly float instead
+   * of sticking to the surface. This is the one-off placement pass right
+   * after a fetch; `relayout()`'s cheap synchronous clamp then keeps moving
+   * road labels glued to the surface as their anchor slides along the road.
+   */
+  private async refineInitialHeights(
+    pending: { entry: DrawnEntry; lon: number; lat: number }[],
+    token: number,
+  ): Promise<void> {
+    if (pending.length === 0) return;
+    const cartesians = pending.map((p) => Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0));
+    let clamped: (Cesium.Cartesian3 | undefined)[];
+    try {
+      clamped = await this.viewer.scene.clampToHeightMostDetailed(cartesians);
+    } catch {
+      return;
+    }
+    if (token !== this.heightToken) return; // superseded by a newer fetch
+    let rendered = false;
+    for (let i = 0; i < clamped.length; i++) {
+      const c = clamped[i];
+      if (!c) continue;
+      const h = Cesium.Cartographic.fromCartesian(c).height;
+      if (!isPlausibleHeight(h)) continue;
+      const { entry, lon, lat } = pending[i];
+      entry.surfaceHeight = h;
+      const pos = Cesium.Cartesian3.fromDegrees(lon, lat, h);
+      if (entry.billboard) entry.billboard.position = pos;
+      else if (entry.label) entry.label.position = pos;
+      rendered = true;
+    }
+    if (rendered) this.viewer.scene.requestRender();
   }
 
   /**
@@ -374,7 +423,17 @@ export class StreetLabels {
         entry.item.lon = lon;
         entry.item.lat = lat;
         entry.item.bearingDeg = bearingDeg;
-        entry.billboard.position = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
+
+        // Stick to the surface the same way the GPS location dot does: a
+        // cheap synchronous clamp against the depth buffer Cesium already
+        // rendered this frame. If it can't resolve yet (tile still loading),
+        // keep the last known height instead of popping back down to 0.
+        const clamped = scene.clampToHeight(Cesium.Cartesian3.fromDegrees(lon, lat, 0));
+        if (clamped) {
+          const h = Cesium.Cartographic.fromCartesian(clamped).height;
+          if (isPlausibleHeight(h)) entry.surfaceHeight = h;
+        }
+        entry.billboard.position = Cesium.Cartesian3.fromDegrees(lon, lat, entry.surfaceHeight);
       }
 
       if (entry.billboard) {
@@ -434,6 +493,11 @@ function roadClassOf(tags: Record<string, string> | undefined): RoadClass {
 function priorityOf(item: LabelItem): number {
   if (item.kind === 'place') return 0;
   return item.roadClass === 'major' ? 1 : 2;
+}
+
+/** A partly-loaded tile can return an absurd height; reject those (mirrors globe.ts's `plausibleHeight`). */
+function isPlausibleHeight(h: number): boolean {
+  return Number.isFinite(h) && h > -500 && h < 9000;
 }
 
 function metersBetween(a: { lat: number; lon: number }, b: { lat: number; lon: number }): number {
