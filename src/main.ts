@@ -425,8 +425,13 @@ function wireSearch(shell: Shell, globe: Globe, nav: Navigator, field: Field, si
       return;
     }
     for (const c of shell.categories.querySelectorAll('.chip')) c.classList.remove('is-active');
-    renderLoading(); // instant feedback while the query is in flight
-    debounce = window.setTimeout(() => void run(value), 180);
+    // Loading state renders once the debounce actually schedules a fetch,
+    // not on every raw keystroke — same eventual UI states, less DOM churn
+    // while typing fast.
+    debounce = window.setTimeout(() => {
+      renderLoading();
+      void run(value);
+    }, 180);
   });
   shell.searchInput.addEventListener('focus', () => {
     if (shell.searchInput.value.trim().length < 2) showHomeList(shell, globe, nav, field);

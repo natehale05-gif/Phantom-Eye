@@ -65,11 +65,25 @@ async function cacheFirst(request, cacheName) {
 // Keep DATA_CACHE from growing forever as new areas/queries get cached across
 // visits and deploys. Cache.keys() returns entries in insertion order in every
 // current browser engine (not spec-guaranteed, but good enough for a simple trim).
-const DATA_CACHE_MAX_ENTRIES = 200;
+// Slightly above the true cap so the "trim every Nth write" throttling below
+// (which lets the cache grow up to TRIM_EVERY-1 entries past the cap between
+// trims) still keeps things reasonably bounded.
+const DATA_CACHE_MAX_ENTRIES = 210;
 async function trimCache(cache, maxEntries) {
   const keys = await cache.keys();
   const excess = keys.length - maxEntries;
   for (let i = 0; i < excess; i++) await cache.delete(keys[i]);
+}
+
+// cache.keys() enumerates every stored request - real work that doesn't need
+// to run after every single cached response (e.g. every debounced search
+// keystroke). Only actually trim every TRIM_EVERY writes per cache.
+const TRIM_EVERY = 10;
+const writeCounts = new Map();
+function shouldTrim(cacheName) {
+  const count = (writeCounts.get(cacheName) ?? 0) + 1;
+  writeCounts.set(cacheName, count);
+  return count % TRIM_EVERY === 0;
 }
 
 // Serve a cached DATA response as "fresh" for a while so pages feel instant;
@@ -91,7 +105,7 @@ async function staleWhileRevalidate(request, cacheName, event) {
     .then(async (res) => {
       if (res && res.ok) {
         await cache.put(request, res.clone());
-        await trimCache(cache, DATA_CACHE_MAX_ENTRIES);
+        if (shouldTrim(cacheName)) await trimCache(cache, DATA_CACHE_MAX_ENTRIES);
       }
       return res;
     })

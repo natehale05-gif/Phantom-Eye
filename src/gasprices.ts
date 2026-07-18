@@ -26,13 +26,23 @@ function stationKey(place: GasStationRef): string {
   return `${place.name.toLowerCase()}@${place.lat.toFixed(4)},${place.lon.toFixed(4)}`;
 }
 
+// Cached in memory after the first load so repeated getGasPrice() calls
+// (one per place-card render) don't re-parse the whole localStorage blob
+// every time. reportGasPrice() mutates and writes through this same object,
+// so it stays in sync without any extra invalidation.
+let cached: Record<string, GasPriceReport> | null = null;
+
 function loadAll(): Record<string, GasPriceReport> {
+  if (cached) return cached;
+  let parsed: Record<string, GasPriceReport> = {};
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
+    if (raw) parsed = JSON.parse(raw);
   } catch {
-    return {};
+    parsed = {};
   }
+  cached = parsed;
+  return cached;
 }
 
 export function getGasPrice(place: GasStationRef): GasPriceReport | null {
