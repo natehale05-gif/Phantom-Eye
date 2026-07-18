@@ -107,6 +107,7 @@ export class StreetLabels {
   private controller?: AbortController;
   private entries: DrawnEntry[] = [];
   private heightToken = 0;
+  private heightInterval?: number;
 
   constructor(private readonly viewer: Cesium.Viewer) {
     // `scene` is REQUIRED for labels that clamp to the ground/terrain — without
@@ -138,14 +139,58 @@ export class StreetLabels {
         });
         requireCameraPercentageChanged(this.viewer, 'streetLabels', 0.25);
       }
+      if (this.heightInterval === undefined) {
+        // Batched, throttled height refresh for road labels sliding along
+        // the road — decoupled from the (much more frequent) camera-changed
+        // tick rate. `scene.clampToHeight` does an actual offscreen render +
+        // readback per call, so calling it per-label on every relayout tick
+        // (which can fire many times a second) was the source of a serious
+        // slowdown; one batched clampToHeightMostDetailed call a few times a
+        // second is dramatically cheaper and still keeps labels glued to the
+        // surface closely enough that the lag isn't perceptible.
+        this.heightInterval = window.setInterval(() => void this.refreshRoadHeights(), 700);
+      }
       this.schedule(200);
     } else {
       this.removeListener?.();
       this.removeListener = undefined;
       releaseCameraPercentageChanged(this.viewer, 'streetLabels');
+      window.clearInterval(this.heightInterval);
+      this.heightInterval = undefined;
       this.controller?.abort();
       this.clearAll();
     }
+  }
+
+  /**
+   * Batch-refresh the surface height of every currently-drawn road label in
+   * one clampToHeightMostDetailed call, using whatever anchor position
+   * `relayout()`'s cheap per-tick re-anchoring has most recently computed.
+   */
+  private async refreshRoadHeights(): Promise<void> {
+    const snapshot = this.entries;
+    const roads = snapshot.filter((e) => e.isRoad && e.billboard);
+    if (roads.length === 0) return;
+    const cartesians = roads.map((e) => Cesium.Cartesian3.fromDegrees(e.item.lon, e.item.lat, 0));
+    let clamped: (Cesium.Cartesian3 | undefined)[];
+    try {
+      clamped = await this.viewer.scene.clampToHeightMostDetailed(cartesians);
+    } catch {
+      return;
+    }
+    if (this.entries !== snapshot) return; // a fetch rebuilt entries while we awaited
+    let rendered = false;
+    for (let i = 0; i < clamped.length; i++) {
+      const c = clamped[i];
+      if (!c) continue;
+      const h = Cesium.Cartographic.fromCartesian(c).height;
+      if (!isPlausibleHeight(h)) continue;
+      const entry = roads[i];
+      entry.surfaceHeight = h;
+      if (entry.billboard) entry.billboard.position = Cesium.Cartesian3.fromDegrees(entry.item.lon, entry.item.lat, h);
+      rendered = true;
+    }
+    if (rendered) this.viewer.scene.requestRender();
   }
 
   private clearAll(): void {
@@ -423,16 +468,10 @@ export class StreetLabels {
         entry.item.lon = lon;
         entry.item.lat = lat;
         entry.item.bearingDeg = bearingDeg;
-
-        // Stick to the surface the same way the GPS location dot does: a
-        // cheap synchronous clamp against the depth buffer Cesium already
-        // rendered this frame. If it can't resolve yet (tile still loading),
-        // keep the last known height instead of popping back down to 0.
-        const clamped = scene.clampToHeight(Cesium.Cartesian3.fromDegrees(lon, lat, 0));
-        if (clamped) {
-          const h = Cesium.Cartographic.fromCartesian(clamped).height;
-          if (isPlausibleHeight(h)) entry.surfaceHeight = h;
-        }
+        // Height itself is refreshed separately in a throttled batch
+        // (`refreshRoadHeights`) rather than here — `scene.clampToHeight` is
+        // an actual render+readback, and this position update runs on every
+        // relayout tick, which can fire many times a second.
         entry.billboard.position = Cesium.Cartesian3.fromDegrees(lon, lat, entry.surfaceHeight);
       }
 
