@@ -462,6 +462,13 @@ export class Globe {
     this.clearPlaces();
     for (const place of places) this.addPin(place);
     this.viewer.scene.requestRender();
+    // One batched height clamp for the whole result set, instead of each
+    // pin firing its own synchronous scene.clampToHeight — for a 20-50
+    // result search that was N back-to-back expensive ray-casts in a single
+    // frame (a visible hitch). Snapshotting the markers here means a late
+    // result from a superseded search just harmlessly sets the position of
+    // an already-removed (detached) entity.
+    void this.refinePinHeights(this.placeMarkers.slice());
   }
 
   private addPin(place: PlacePin): void {
@@ -494,16 +501,24 @@ export class Globe {
       },
     });
     this.placeMarkers.push({ entity, place });
-    void this.refinePinHeight(entity, place.lon, place.lat);
   }
 
-  private async refinePinHeight(entity: Cesium.Entity, lon: number, lat: number): Promise<void> {
-    const h = await this.sampleHeight(lon, lat);
-    if (h === null) return;
-    entity.position = new Cesium.ConstantPositionProperty(
-      Cesium.Cartesian3.fromDegrees(lon, lat, h),
-    );
-    this.viewer.scene.requestRender();
+  private async refinePinHeights(
+    markers: { entity: Cesium.Entity; place: PlacePin }[],
+  ): Promise<void> {
+    if (markers.length === 0) return;
+    const heights = await this.sampleHeights(markers.map((m): LngLat => [m.place.lon, m.place.lat]));
+    let rendered = false;
+    for (let i = 0; i < heights.length; i++) {
+      const h = heights[i];
+      if (h === null) continue;
+      const { entity, place } = markers[i];
+      entity.position = new Cesium.ConstantPositionProperty(
+        Cesium.Cartesian3.fromDegrees(place.lon, place.lat, h),
+      );
+      rendered = true;
+    }
+    if (rendered) this.viewer.scene.requestRender();
   }
 
   /**
@@ -639,15 +654,39 @@ export class Globe {
     // disappears behind you." If you're too far from the route (about to
     // reroute), leave the route alone rather than stretching a long
     // connector out to an off-route position.
-    if (this.navigating && this.drivePath.length >= 2) {
+    //
+    // This recompute (an O(n) scan plus rebuilding the drive path and its
+    // cumulative distances) is gated to at most once per
+    // ROUTE_SNAP_MIN_INTERVAL_MS — GPS fixes can arrive faster than that,
+    // and redoing this on every single one was pure wasted CPU with no
+    // visible difference, the same class of cost `followTick` already gates
+    // for the camera below.
+    if (
+      this.navigating &&
+      this.drivePath.length >= 2 &&
+      performance.now() - this.lastRouteSnapAt >= Globe.ROUTE_SNAP_MIN_INTERVAL_MS
+    ) {
       const proj = this.projectOntoDrivePath(lon, lat);
       if (proj && proj.offset < ROUTE_SNAP_MAX_OFFSET_M) {
+        this.lastRouteSnapAt = performance.now();
         this.connectRouteTo(lon, lat, height, proj);
       }
     }
 
-    void this.refineLocationHeight(lon, lat);
+    // `sampleHeight`'s first move is a synchronous `scene.clampToHeight` —
+    // an actual offscreen render + readback. Gating this the same way keeps
+    // fast GPS fix streams from repeatedly paying that cost; the dot simply
+    // keeps its last resolved height between refines (see the comment below).
+    if (performance.now() - this.lastHeightRefineAt >= Globe.HEIGHT_REFINE_MIN_INTERVAL_MS) {
+      this.lastHeightRefineAt = performance.now();
+      void this.refineLocationHeight(lon, lat);
+    }
   }
+
+  private static readonly ROUTE_SNAP_MIN_INTERVAL_MS = 250;
+  private lastRouteSnapAt = 0;
+  private static readonly HEIGHT_REFINE_MIN_INTERVAL_MS = 400;
+  private lastHeightRefineAt = 0;
 
   private async refineLocationHeight(lon: number, lat: number): Promise<void> {
     const h = await this.sampleHeight(lon, lat);
