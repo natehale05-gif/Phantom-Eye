@@ -110,6 +110,10 @@ export class Globe {
 
   // Guided-drive animation state.
   private drivePath: { cart: Cesium.Cartesian3; lonlat: LngLat }[] = [];
+  // Kept in lockstep with drivePath (same length/order) purely so the route
+  // polyline's CallbackProperty can return a stable array reference instead
+  // of `.map()`-ing a fresh array on every render evaluation.
+  private routeCartesians: Cesium.Cartesian3[] = [];
   private driveCumulative: number[] = [];
   private driveRaf?: number;
 
@@ -733,19 +737,26 @@ export class Globe {
     this.locationAnimRaf = requestAnimationFrame(tick);
   }
 
-  /** How far along the currently-drawn route (lon, lat) sits, and how far off it. */
+  /**
+   * How far along the currently-drawn route (lon, lat) sits, and how far off
+   * it. Inline scalar math (no per-segment array/tuple allocation) since this
+   * runs once per GPS fix over up to ~300 segments while navigating.
+   */
   private projectOntoDrivePath(lon: number, lat: number): { segIndex: number; t: number; offset: number } | null {
     const path = this.drivePath;
     if (path.length < 2) return null;
     const kx = Math.cos(toRad(lat));
-    const toXY = (p: LngLat): [number, number] => [(p[0] - lon) * kx, p[1] - lat];
 
     let best = Infinity;
     let bestSeg = 0;
     let bestT = 0;
     for (let i = 0; i < path.length - 1; i++) {
-      const [ax, ay] = toXY(path[i].lonlat);
-      const [bx, by] = toXY(path[i + 1].lonlat);
+      const pa = path[i].lonlat;
+      const pb = path[i + 1].lonlat;
+      const ax = (pa[0] - lon) * kx;
+      const ay = pa[1] - lat;
+      const bx = (pb[0] - lon) * kx;
+      const by = pb[1] - lat;
       const abx = bx - ax;
       const aby = by - ay;
       const len2 = abx * abx + aby * aby || 1e-12;
@@ -773,6 +784,7 @@ export class Globe {
   private connectRouteTo(lon: number, lat: number, height: number, proj: { segIndex: number }): void {
     const cart = Cesium.Cartesian3.fromDegrees(lon, lat, height + 1.5);
     this.drivePath = [{ cart, lonlat: [lon, lat] }, ...this.drivePath.slice(proj.segIndex + 1)];
+    this.routeCartesians = this.drivePath.map((p) => p.cart);
     this.driveCumulative = cumulativeDistances(this.drivePath.map((p) => p.lonlat));
   }
 
@@ -861,15 +873,29 @@ export class Globe {
     this.onFollowChange?.(this.followActive);
   }
 
+  // Scratch objects reused across applyFollow calls instead of allocating a
+  // fresh Matrix4 + two Cartesian3s every GPS fix. Kept separate from
+  // updateNavCamera's own scratch set below (not shared) since the two
+  // camera paths run independently and there's no need to risk any aliasing
+  // between them for a purely mechanical allocation-avoidance change.
+  private readonly followScratchFrame = new Cesium.Matrix4();
+  private readonly followScratchLocal = new Cesium.Cartesian3();
+  private readonly followScratchCamPos = new Cesium.Cartesian3();
+
   private applyFollow(instant: boolean): void {
     const s = this.locationState;
     if (!s) return;
     const hRad = toRad(s.heading ?? 0);
-    const frame = Cesium.Transforms.eastNorthUpToFixedFrame(s.position);
+    const frame = Cesium.Transforms.eastNorthUpToFixedFrame(s.position, undefined, this.followScratchFrame);
     const back = 150;
     const up = 75;
-    const local = new Cesium.Cartesian3(-Math.sin(hRad) * back, -Math.cos(hRad) * back, up);
-    const camPos = Cesium.Matrix4.multiplyByPoint(frame, local, new Cesium.Cartesian3());
+    const local = Cesium.Cartesian3.fromElements(
+      -Math.sin(hRad) * back,
+      -Math.cos(hRad) * back,
+      up,
+      this.followScratchLocal,
+    );
+    const camPos = Cesium.Matrix4.multiplyByPoint(frame, local, this.followScratchCamPos);
     const orientation = { heading: hRad, pitch: toRad(-28), roll: 0 };
     if (instant) {
       this.viewer.camera.setView({ destination: camPos, orientation });
@@ -939,17 +965,27 @@ export class Globe {
    * driving view. Called on every GPS fix while guiding; skipped while the
    * user has manually taken over the camera (see `onNavManualInteraction`).
    */
+  // Separate scratch set from applyFollow's above — see that comment.
+  private readonly navScratchFrame = new Cesium.Matrix4();
+  private readonly navScratchLocal = new Cesium.Cartesian3();
+  private readonly navScratchCamPos = new Cesium.Cartesian3();
+
   updateNavCamera(courseDeg: number, smooth = false): void {
     this.lastCourseDeg = courseDeg;
     if (this.navManualOverride) return;
     const s = this.locationState;
     if (!s) return;
     const hRad = toRad(courseDeg);
-    const frame = Cesium.Transforms.eastNorthUpToFixedFrame(s.position);
+    const frame = Cesium.Transforms.eastNorthUpToFixedFrame(s.position, undefined, this.navScratchFrame);
     const back = 95;
     const up = 52;
-    const local = new Cesium.Cartesian3(-Math.sin(hRad) * back, -Math.cos(hRad) * back, up);
-    const camPos = Cesium.Matrix4.multiplyByPoint(frame, local, new Cesium.Cartesian3());
+    const local = Cesium.Cartesian3.fromElements(
+      -Math.sin(hRad) * back,
+      -Math.cos(hRad) * back,
+      up,
+      this.navScratchLocal,
+    );
+    const camPos = Cesium.Matrix4.multiplyByPoint(frame, local, this.navScratchCamPos);
     const orientation = { heading: hRad, pitch: toRad(-22), roll: 0 };
     if (smooth) {
       // Cinematic entrance: starting guidance, or coming back from free-roam.
@@ -1093,6 +1129,7 @@ export class Globe {
     this.altPaths = [];
     this.routeEnd = undefined;
     this.drivePath = [];
+    this.routeCartesians = [];
     this.driveCumulative = [];
     this.viewer.scene.requestRender();
   }
@@ -1116,11 +1153,13 @@ export class Globe {
       lonlat,
     }));
     this.drivePath = path;
+    this.routeCartesians = path.map((p) => p.cart);
     this.driveCumulative = cumulativeDistances(path.map((p) => p.lonlat));
 
     const line = this.viewer.entities.add({
       polyline: {
-        positions: new Cesium.CallbackProperty(() => this.drivePath.map((p) => p.cart), false),
+        // Returns a stable array reference — see routeCartesians' declaration.
+        positions: new Cesium.CallbackProperty(() => this.routeCartesians, false),
         width: 9,
         // Solid blue with a white outline, matching the "you are here" dot.
         material: new Cesium.PolylineOutlineMaterialProperty({
@@ -1175,7 +1214,9 @@ export class Globe {
     for (let i = 0; i < heights.length && i < this.drivePath.length; i++) {
       const h = heights[i];
       if (h === null) continue;
-      this.drivePath[i].cart = Cesium.Cartesian3.fromDegrees(sampled[i][0], sampled[i][1], h + 1.5);
+      const cart = Cesium.Cartesian3.fromDegrees(sampled[i][0], sampled[i][1], h + 1.5);
+      this.drivePath[i].cart = cart;
+      this.routeCartesians[i] = cart;
     }
     if (this.routeEnd) {
       this.routeEnd.position = new Cesium.ConstantPositionProperty(this.drivePath[this.drivePath.length - 1].cart);
