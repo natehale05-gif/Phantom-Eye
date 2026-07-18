@@ -60,6 +60,11 @@ const toRad = Cesium.Math.toRadians;
 const ACCENT = Cesium.Color.fromCssColorString('#0A84FF'); // "you are here" GPS dot (blue)
 const WHITE = Cesium.Color.WHITE;
 const TRACK_COLOR = Cesium.Color.fromCssColorString('#FF375F');
+// Only snap the location dot onto the route (and trim behind it) when GPS is
+// within this many meters of it — otherwise the user is genuinely off-route
+// (a reroute is likely already in flight) and snapping would glue the dot to
+// the wrong road.
+const ROUTE_SNAP_MAX_OFFSET_M = 30;
 
 export class Globe {
   readonly viewer: Cesium.Viewer;
@@ -71,6 +76,12 @@ export class Globe {
   // Live location + follow camera.
   private locationEntity?: Cesium.Entity;
   private locationState?: LocationState;
+  // The position actually rendered for the location dot — animated smoothly
+  // toward `locationState.position` (the latest resolved fix) instead of
+  // jumping there instantly, so the dot glides between GPS updates.
+  private displayedPosition?: Cesium.Cartesian3;
+  private locationAnimRaf?: number;
+  private static readonly LOCATION_ANIMATE_MS = 450;
   private followActive = false;
   private followExit?: () => void;
   private onFollowChange?: (on: boolean) => void;
@@ -595,13 +606,29 @@ export class Globe {
   /** Update (or create) the user location dot, keeping it on the surface. */
   updateLocation(fix: LocationFix): void {
     const height = this.locationState?.height ?? 0;
+    let lon = fix.lon;
+    let lat = fix.lat;
+
+    // While actively navigating, snap the dot onto the route itself (rather
+    // than raw, noisy GPS) whenever we're close enough to it, and trim the
+    // drawn route behind that point — Apple-Maps-style "the line disappears
+    // behind you." If we're too far off the route (about to reroute), fall
+    // back to the raw fix so the dot doesn't snap onto the wrong road.
+    if (this.navigating && this.drivePath.length >= 2) {
+      const proj = this.projectOntoDrivePath(fix.lon, fix.lat);
+      if (proj && proj.offset < ROUTE_SNAP_MAX_OFFSET_M) {
+        [lon, lat] = proj.snappedLonLat;
+        this.trimDrivePathBehind(proj);
+      }
+    }
+
     const state: LocationState = {
-      lon: fix.lon,
-      lat: fix.lat,
+      lon,
+      lat,
       accuracy: Math.max(fix.accuracy ?? 8, 4),
       heading: fix.heading ?? null,
       height,
-      position: Cesium.Cartesian3.fromDegrees(fix.lon, fix.lat, height),
+      position: Cesium.Cartesian3.fromDegrees(lon, lat, height),
     };
     this.locationState = state;
 
@@ -609,9 +636,10 @@ export class Globe {
     else this.locationEntity.show = true;
 
     this.followTick();
+    this.animateLocationTo(state.position);
     this.viewer.scene.requestRender();
 
-    void this.refineLocationHeight(fix.lon, fix.lat);
+    void this.refineLocationHeight(lon, lat);
   }
 
   private async refineLocationHeight(lon: number, lat: number): Promise<void> {
@@ -622,7 +650,89 @@ export class Globe {
     s.height = h;
     s.position = Cesium.Cartesian3.fromDegrees(lon, lat, h);
     this.followTick();
+    this.animateLocationTo(s.position);
     this.viewer.scene.requestRender();
+  }
+
+  /**
+   * Smoothly glide the rendered dot from wherever it currently is to `target`
+   * over LOCATION_ANIMATE_MS, instead of jumping there instantly on every GPS
+   * fix. Self-terminating — this only runs for the brief animation window
+   * after each fix, not continuously.
+   */
+  private animateLocationTo(target: Cesium.Cartesian3): void {
+    if (this.locationAnimRaf !== undefined) {
+      cancelAnimationFrame(this.locationAnimRaf);
+      this.locationAnimRaf = undefined;
+    }
+    const start = this.displayedPosition;
+    if (!start || Cesium.Cartesian3.equals(start, target)) {
+      this.displayedPosition = target;
+      return;
+    }
+    const from = Cesium.Cartesian3.clone(start);
+    const startTime = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - startTime) / Globe.LOCATION_ANIMATE_MS);
+      const eased = 1 - (1 - t) * (1 - t); // ease-out
+      this.displayedPosition = Cesium.Cartesian3.lerp(from, target, eased, new Cesium.Cartesian3());
+      this.viewer.scene.requestRender();
+      if (t < 1) {
+        this.locationAnimRaf = requestAnimationFrame(tick);
+      } else {
+        this.locationAnimRaf = undefined;
+        this.displayedPosition = target;
+      }
+    };
+    this.locationAnimRaf = requestAnimationFrame(tick);
+  }
+
+  /** Nearest point on the currently-drawn route to (lon, lat), for dot-snapping. */
+  private projectOntoDrivePath(
+    lon: number,
+    lat: number,
+  ): { segIndex: number; t: number; offset: number; snappedLonLat: LngLat; snappedCart: Cesium.Cartesian3 } | null {
+    const path = this.drivePath;
+    if (path.length < 2) return null;
+    const kx = Math.cos(toRad(lat));
+    const toXY = (p: LngLat): [number, number] => [(p[0] - lon) * kx, p[1] - lat];
+
+    let best = Infinity;
+    let bestSeg = 0;
+    let bestT = 0;
+    for (let i = 0; i < path.length - 1; i++) {
+      const [ax, ay] = toXY(path[i].lonlat);
+      const [bx, by] = toXY(path[i + 1].lonlat);
+      const abx = bx - ax;
+      const aby = by - ay;
+      const len2 = abx * abx + aby * aby || 1e-12;
+      let t = -(ax * abx + ay * aby) / len2;
+      t = Math.max(0, Math.min(1, t));
+      const cx = ax + abx * t;
+      const cy = ay + aby * t;
+      const d2 = cx * cx + cy * cy;
+      if (d2 < best) {
+        best = d2;
+        bestSeg = i;
+        bestT = t;
+      }
+    }
+    const a = path[bestSeg].lonlat;
+    const b = path[bestSeg + 1].lonlat;
+    const snappedLonLat: LngLat = [a[0] + (b[0] - a[0]) * bestT, a[1] + (b[1] - a[1]) * bestT];
+    const snappedCart = Cesium.Cartesian3.lerp(path[bestSeg].cart, path[bestSeg + 1].cart, bestT, new Cesium.Cartesian3());
+    const offset = Math.sqrt(best) * 111_320;
+    return { segIndex: bestSeg, t: bestT, offset, snappedLonLat, snappedCart };
+  }
+
+  /** Cut the drawn route back to (and no further than) the current snapped position. */
+  private trimDrivePathBehind(proj: { segIndex: number; t: number; snappedLonLat: LngLat; snappedCart: Cesium.Cartesian3 }): void {
+    if (proj.segIndex === 0 && proj.t <= 0.001) return; // nothing behind yet
+    this.drivePath = [
+      { cart: proj.snappedCart, lonlat: proj.snappedLonLat },
+      ...this.drivePath.slice(proj.segIndex + 1),
+    ];
+    this.driveCumulative = cumulativeDistances(this.drivePath.map((p) => p.lonlat));
   }
 
   /**
@@ -649,7 +759,7 @@ export class Globe {
 
     this.locationEntity = this.viewer.entities.add({
       position: new Cesium.CallbackProperty(
-        () => this.locationState?.position ?? Cesium.Cartesian3.ZERO,
+        () => this.displayedPosition ?? this.locationState?.position ?? Cesium.Cartesian3.ZERO,
         false,
       ) as unknown as Cesium.PositionProperty,
       ellipse: {
@@ -673,11 +783,16 @@ export class Globe {
 
   clearLocation(): void {
     this.setFollow(false);
+    if (this.locationAnimRaf !== undefined) {
+      cancelAnimationFrame(this.locationAnimRaf);
+      this.locationAnimRaf = undefined;
+    }
     if (this.locationEntity) {
       this.viewer.entities.remove(this.locationEntity);
       this.locationEntity = undefined;
     }
     this.locationState = undefined;
+    this.displayedPosition = undefined;
     this.viewer.scene.requestRender();
   }
 
@@ -917,7 +1032,12 @@ export class Globe {
       polyline: {
         positions: new Cesium.CallbackProperty(() => this.drivePath.map((p) => p.cart), false),
         width: 9,
-        material: new Cesium.PolylineGlowMaterialProperty({ glowPower: 0.22, color: ACCENT }),
+        // Solid blue with a white outline, matching the "you are here" dot.
+        material: new Cesium.PolylineOutlineMaterialProperty({
+          color: ACCENT,
+          outlineColor: WHITE,
+          outlineWidth: 3,
+        }),
         depthFailMaterial: new Cesium.ColorMaterialProperty(ACCENT.withAlpha(0.55)),
       },
     });
