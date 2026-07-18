@@ -143,9 +143,7 @@ export class Globe {
       // especially on phones — with no visual difference for an explorer app.
       requestRenderMode: true,
       maximumRenderTimeChange: Infinity,
-      // FXAA (enabled in tuneScene) is our anti-aliasing pass; browser MSAA on
-      // top of it is redundant per-frame GPU work, so turn the WebGL default off.
-      contextOptions: { webgl: { antialias: false } },
+      contextOptions: { webgl: { antialias: true } },
     });
 
     this.tuneScene();
@@ -293,7 +291,10 @@ export class Globe {
     // Photoreal tiles are the surface, so the reference ellipsoid stays hidden.
     scene.globe.show = false;
 
-    if (scene.postProcessStages.fxaa) scene.postProcessStages.fxaa.enabled = true;
+    // MSAA (enabled via contextOptions) is our anti-aliasing pass; FXAA is a
+    // post-process blur on top that specifically softens text and thin lines
+    // (labels, pins, routes), so it stays off.
+    if (scene.postProcessStages.fxaa) scene.postProcessStages.fxaa.enabled = false;
 
     // HDR adds a float framebuffer + tonemap pass on top of an already-heavy
     // photoreal scene — worth it on a desktop GPU, not on a phone.
@@ -305,11 +306,10 @@ export class Globe {
         /* not supported on all GPUs */
       }
     }
-    // Cap the render resolution: on high-DPI phones 1.5x looks crisp while
-    // rendering far fewer pixels than the native 3x, so it stays smooth. Mobile
-    // gets a tighter cap still, since it's also paying for the photoreal tiles
-    // and follow camera on a much smaller thermal/power budget.
-    this.viewer.resolutionScale = Math.min(window.devicePixelRatio || 1, mobile ? 1.25 : 1.5);
+    // Cap the render resolution: 1.5x looks crisp while rendering far fewer
+    // pixels than the native 3x DPR some phones report, so it stays smooth
+    // without looking soft.
+    this.viewer.resolutionScale = Math.min(window.devicePixelRatio || 1, 1.5);
 
     const ctrl = scene.screenSpaceCameraController;
     ctrl.enableCollisionDetection = true;
@@ -1295,15 +1295,13 @@ function pinImage(color: string, glyph: string): string {
 
   const light = mixWithWhite(color, 0.3);
   const head = glyph
-    ? `<circle cx="32" cy="30" r="13.5" fill="#fff"/>` +
-      `<circle cx="32" cy="30" r="13.5" fill="none" stroke="${color}" stroke-opacity="0.15" stroke-width="1"/>` +
-      `<g transform="translate(20 18) scale(0.833)" fill="none" stroke="${color}" ` +
-      `stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${glyph}</g>`
-    : `<circle cx="32" cy="30" r="7.5" fill="#fff"/>` +
-      `<circle cx="32" cy="30" r="3.4" fill="${color}"/>`;
+    ? `<g transform="translate(20 18) scale(0.833)" fill="none" stroke="#fff" ` +
+      `stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">${glyph}</g>`
+    : `<circle cx="32" cy="30" r="5" fill="#fff"/>`;
 
+  const raster = Math.min(window.devicePixelRatio || 1, 3);
   const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="84" viewBox="0 0 64 84">` +
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${64 * raster}" height="${84 * raster}" viewBox="0 0 64 84">` +
     `<defs>` +
     `<linearGradient id="pg" x1="0" y1="0" x2="0" y2="1">` +
     `<stop offset="0" stop-color="${light}"/><stop offset="1" stop-color="${color}"/>` +

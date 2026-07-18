@@ -42,9 +42,9 @@ export function fontForVariant(variant: LabelVariant): string {
   return STYLES[variant].font;
 }
 
-// Cap devicePixelRatio so 3x-DPR phones don't triple rasterization cost —
-// same reasoning as the resolutionScale cap in globe.ts.
-const MAX_DPR = 2;
+// Cap devicePixelRatio so ultra-high-DPR phones don't quadruple rasterization
+// cost — text is cached per variant:text so this only costs once per name.
+const MAX_DPR = 3;
 const PADDING = 4; // CSS px around the measured text so the stroke isn't clipped
 
 let measureCtx: CanvasRenderingContext2D | null = null;
