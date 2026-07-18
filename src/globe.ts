@@ -1173,15 +1173,17 @@ export class Globe {
     }
   }
 
+  /** A teardrop pin (matching search-result/waypoint pins), not a plain dot. */
   private pin(position: Cesium.Cartesian3, color: Cesium.Color): Cesium.Entity {
     return this.viewer.entities.add({
       position,
-      point: {
-        pixelSize: 14,
-        color,
-        outlineColor: WHITE,
-        outlineWidth: 2.5,
+      billboard: {
+        image: pinImage(color.toCssColorString(), ''),
+        width: 34,
+        height: 44,
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        scaleByDistance: new Cesium.NearFarScalar(200, 1, 45000, 0.55),
       },
     });
   }
