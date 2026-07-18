@@ -647,7 +647,7 @@ function tangentVector(position: Cesium.Cartesian3, bearingDeg: number): Cesium.
 }
 
 const BEARING_SAMPLE_DISTANCE_M = 10;
-const FLIP_HYSTERESIS_PX = 3;
+const FLIP_HYSTERESIS_DEG = 5;
 
 /** A point `distanceM` metres from (lon, lat) along `bearingDeg` (standard spherical destination formula). */
 function destinationPoint(
@@ -678,13 +678,21 @@ function destinationPoint(
  * direction), so whichever way we pick, the text can end up upside-down from
  * some viewing angles as the camera orbits. The camera-heading-only
  * approximation this used to use ignored pitch/roll and got it wrong often
- * enough to visibly show upside-down names — this instead measures directly:
- * project the anchor and a point a few metres ahead along the bearing to
- * screen space, and flip 180° whenever the "ahead" point would land *below*
- * the anchor on screen (which, since `alignedAxis` aligns the billboard's up
- * with that projected direction, means the text's up would point screen-down
- * — upside-down). A small pixel-hysteresis band avoids flicker exactly at
- * the horizon-crossing case where a road runs nearly edge-on to the camera.
+ * enough to visibly show upside-down names.
+ *
+ * The direct fix measures the actual screen-space reading direction: project
+ * the anchor and a point a few metres ahead along the bearing, and look at
+ * the full angle between them (not just whether "ahead" is above or below —
+ * that alone only works for roads running roughly vertically on screen, and
+ * was effectively a coin-flip for roads running roughly *horizontally*,
+ * which is most of them in a typical view — exactly matching "some" street
+ * names coming out upside-down). Flip 180° whenever that reading direction
+ * points more than 90° away from "rightward" on screen, the same rule every
+ * rotated-map-label implementation uses to keep text legible at any angle: a
+ * horizontal-ish rotation reads normally, but past ±90° from pointing right
+ * it would start reading backwards and upside-down. Hysteresis in degrees
+ * (not raw pixels) avoids flicker right at that ±90° boundary regardless of
+ * how far away the sampled "ahead" point projects.
  */
 function roadAlignedAxis(
   scene: Cesium.Scene,
@@ -703,9 +711,16 @@ function roadAlignedAxis(
       Cesium.Cartesian3.fromDegrees(ahead.lon, ahead.lat, surfaceHeight),
     );
     if (aheadScreen) {
+      const dx = aheadScreen.x - anchorScreen.x;
       const dy = aheadScreen.y - anchorScreen.y;
-      if (!flipped && dy > FLIP_HYSTERESIS_PX) flipped = true;
-      else if (flipped && dy < -FLIP_HYSTERESIS_PX) flipped = false;
+      // Only bother if the two points didn't project to (near) the same
+      // spot (e.g. looking straight down the road) — otherwise the angle is
+      // meaningless noise and we just keep the last known flip state.
+      if (Math.hypot(dx, dy) > 0.5) {
+        const angleFromRight = Math.abs(Cesium.Math.toDegrees(Math.atan2(dy, dx)));
+        if (!flipped && angleFromRight > 90 + FLIP_HYSTERESIS_DEG) flipped = true;
+        else if (flipped && angleFromRight < 90 - FLIP_HYSTERESIS_DEG) flipped = false;
+      }
     }
   }
   const finalBearing = flipped ? bearingDeg + 180 : bearingDeg;
