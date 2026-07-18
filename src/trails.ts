@@ -269,7 +269,12 @@ export class TrailLayers {
         polyline: {
           positions: Cesium.Cartesian3.fromDegreesArray(way.coords),
           width: 5,
-          material: new Cesium.ColorMaterialProperty(color),
+          // Solid colour with a white outline, matching the routes/location dot.
+          material: new Cesium.PolylineOutlineMaterialProperty({
+            color,
+            outlineColor: Cesium.Color.WHITE,
+            outlineWidth: 2,
+          }),
           clampToGround: clamp,
           classificationType: clamp ? Cesium.ClassificationType.BOTH : undefined,
           // Fallback (unsupported GPU): show through terrain so it's still visible.

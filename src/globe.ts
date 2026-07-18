@@ -93,6 +93,7 @@ export class Globe {
   private navPointerListener?: () => void;
   private lastCourseDeg = 0;
   private static readonly NAV_RESUME_DELAY_MS = 8000;
+  private static readonly NAV_CAMERA_GLIDE_S = 0.6;
 
   // Dropped place pins (search results / nearby categories).
   private placeMarkers: { entity: Cesium.Entity; place: PlacePin }[] = [];
@@ -114,7 +115,6 @@ export class Globe {
 
   // Route rendering state (positions are clamped to the photoreal surface).
   private altPaths: Cesium.Cartesian3[][] = [];
-  private routeStart?: Cesium.Entity;
   private routeEnd?: Cesium.Entity;
   private routeClampToken = 0;
 
@@ -913,6 +913,7 @@ export class Globe {
     const camPos = Cesium.Matrix4.multiplyByPoint(frame, local, new Cesium.Cartesian3());
     const orientation = { heading: hRad, pitch: toRad(-22), roll: 0 };
     if (smooth) {
+      // Cinematic entrance: starting guidance, or coming back from free-roam.
       this.viewer.camera.flyTo({
         destination: camPos,
         orientation,
@@ -920,7 +921,16 @@ export class Globe {
         easingFunction: Cesium.EasingFunction.QUINTIC_IN_OUT,
       });
     } else {
-      this.viewer.camera.setView({ destination: camPos, orientation });
+      // Continuous per-fix chase camera: a short, LINEAR glide so consecutive
+      // updates compose smoothly — an eased curve restarting on every fix
+      // would look like a stutter at GPS update cadence, and an instant
+      // `setView` would jump abruptly since the dot itself now glides too.
+      this.viewer.camera.flyTo({
+        destination: camPos,
+        orientation,
+        duration: Globe.NAV_CAMERA_GLIDE_S,
+        easingFunction: Cesium.EasingFunction.LINEAR_NONE,
+      });
     }
     this.viewer.scene.requestRender();
   }
@@ -1009,7 +1019,11 @@ export class Globe {
       polyline: {
         positions: new Cesium.CallbackProperty(() => this.trackPositions, false),
         width: 7,
-        material: new Cesium.PolylineGlowMaterialProperty({ glowPower: 0.25, color: TRACK_COLOR }),
+        material: new Cesium.PolylineOutlineMaterialProperty({
+          color: TRACK_COLOR,
+          outlineColor: WHITE,
+          outlineWidth: 2,
+        }),
         depthFailMaterial: new Cesium.ColorMaterialProperty(TRACK_COLOR.withAlpha(0.5)),
       },
     });
@@ -1038,7 +1052,6 @@ export class Globe {
     for (const e of this.routeEntities) this.viewer.entities.remove(e);
     this.routeEntities = [];
     this.altPaths = [];
-    this.routeStart = undefined;
     this.routeEnd = undefined;
     this.drivePath = [];
     this.driveCumulative = [];
@@ -1079,17 +1092,16 @@ export class Globe {
         depthFailMaterial: new Cesium.ColorMaterialProperty(ACCENT.withAlpha(0.55)),
       },
     });
-    this.routeStart = this.pin(path[0].cart, Cesium.Color.fromCssColorString('#32D74B'));
     this.routeEnd = this.pin(path[path.length - 1].cart, Cesium.Color.fromCssColorString('#FF453A'));
-    this.routeEntities.push(line, this.routeStart, this.routeEnd);
+    this.routeEntities.push(line, this.routeEnd);
     this.viewer.scene.requestRender();
     void this.clampSelectedRoute(sampled);
   }
 
   /**
    * Draw the selected route plus dimmed alternates (Apple-Maps style). The
-   * selected route gets the glowing accent line and start/end pins; alternates
-   * render as muted gray lines behind it. All lines are clamped to the surface.
+   * selected route gets the solid accent line and an end pin; alternates
+   * render as solid gray lines behind it. All lines are clamped to the surface.
    */
   showRouteWithAlternates(selected: LngLat[], others: LngLat[][]): void {
     this.clearRoute();
@@ -1097,12 +1109,17 @@ export class Globe {
       const sampled = downsample(alt, 300);
       const carts = sampled.map((c) => Cesium.Cartesian3.fromDegrees(c[0], c[1], 2));
       const idx = this.altPaths.push(carts) - 1;
+      const altGray = Cesium.Color.fromCssColorString('#8E8E93');
       const line = this.viewer.entities.add({
         polyline: {
           positions: new Cesium.CallbackProperty(() => this.altPaths[idx], false),
           width: 7,
-          material: new Cesium.ColorMaterialProperty(Cesium.Color.fromCssColorString('#8E8E93').withAlpha(0.55)),
-          depthFailMaterial: new Cesium.ColorMaterialProperty(Cesium.Color.fromCssColorString('#8E8E93').withAlpha(0.32)),
+          material: new Cesium.PolylineOutlineMaterialProperty({
+            color: altGray,
+            outlineColor: WHITE,
+            outlineWidth: 2,
+          }),
+          depthFailMaterial: new Cesium.ColorMaterialProperty(altGray.withAlpha(0.32)),
         },
       });
       this.routeEntities.push(line);
@@ -1121,7 +1138,6 @@ export class Globe {
       if (h === null) continue;
       this.drivePath[i].cart = Cesium.Cartesian3.fromDegrees(sampled[i][0], sampled[i][1], h + 1.5);
     }
-    if (this.routeStart) this.routeStart.position = new Cesium.ConstantPositionProperty(this.drivePath[0].cart);
     if (this.routeEnd) {
       this.routeEnd.position = new Cesium.ConstantPositionProperty(this.drivePath[this.drivePath.length - 1].cart);
     }
