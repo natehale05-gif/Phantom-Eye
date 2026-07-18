@@ -34,6 +34,10 @@ const MAX_ALTITUDE = 8000;
 const FADE_START_ALTITUDE = 6000;
 const MAX_SPAN_DEG = 0.45;
 const MAX_LABELS = 70;
+// Cap the per-view-tile cache so long panning sessions across many distinct
+// view tiles don't grow it unbounded (same bounded-LRU idea as trails.ts
+// and labelTexture.ts's canvas cache).
+const MAX_CACHE_TILES = 60;
 
 const METERS_PER_DEG_LAT = 111320;
 // Walk at least this far in each direction from a road's anchor point before
@@ -256,7 +260,11 @@ export class StreetLabels {
 
     const current = ++this.token;
     let items = this.cache.get(key);
-    if (!items) {
+    if (items) {
+      // Touch for simple oldest-eviction recency ordering (Map preserves insertion order).
+      this.cache.delete(key);
+      this.cache.set(key, items);
+    } else {
       if (this.announce) this.statusHandler?.('loading');
       // Cancel a still-in-flight request for a now-stale view before starting
       // this one — otherwise continuous panning can pile up several
@@ -278,6 +286,10 @@ export class StreetLabels {
       }
       items = fetched;
       this.cache.set(key, items);
+      if (this.cache.size > MAX_CACHE_TILES) {
+        const oldestKey = this.cache.keys().next().value;
+        if (oldestKey !== undefined) this.cache.delete(oldestKey);
+      }
     }
     this.draw(items);
     // Only mark this view handled once it has actually been drawn.
@@ -317,13 +329,18 @@ export class StreetLabels {
         out.push({ id: el.id, lon: el.lon, lat: el.lat, text: name, kind: 'place', bearingDeg: 0 });
       } else if (el.type === 'way' && el.geometry?.length) {
         seen.add(el.id);
+        // Long highways can come back from Overpass with thousands of
+        // vertices; downsample once here (both for the initial anchor pick
+        // below and for the geometry stored for later per-tick re-anchoring)
+        // so relayout()'s segment-projection scan stays cheap.
+        const geometry = downsampleGeometry(el.geometry);
         // Anchor at the vertex closest to where the user actually is — NOT
         // the way's overall midpoint. Overpass's bbox filter selects whole
         // ways and returns their FULL geometry uncropped, so for a long road
         // the old "overall midpoint" anchor could sit far outside the
         // current view: the root cause of labels appearing to float away
         // from the visible road, or not appear at all.
-        const { lon, lat, bearingDeg } = pickAnchorAndBearing(el.geometry, centerLon, centerLat);
+        const { lon, lat, bearingDeg } = pickAnchorAndBearing(geometry, centerLon, centerLat);
         out.push({
           id: el.id,
           lon,
@@ -332,7 +349,7 @@ export class StreetLabels {
           kind: 'road',
           bearingDeg,
           roadClass: roadClassOf(el.tags),
-          geometry: el.geometry,
+          geometry,
         });
       }
     }
@@ -551,6 +568,41 @@ function metersBetween(a: { lat: number; lon: number }, b: { lat: number; lon: n
   const dx = (b.lon - a.lon) * cosLat * METERS_PER_DEG_LAT;
   const dy = (b.lat - a.lat) * METERS_PER_DEG_LAT;
   return Math.hypot(dx, dy);
+}
+
+// Target spacing between kept vertices — comfortably denser than
+// MIN_BEARING_SAMPLE_M (18m) so pickAnchorAndBearing's segment-projection
+// and bearing-sampling accuracy (and the anti-floating/anti-upside-down
+// fixes built on it) aren't affected by the downsampling.
+const GEOMETRY_TARGET_SPACING_M = 20;
+// Backstop point-count cap for pathological cases (extremely long way with
+// very fine native spacing).
+const MAX_GEOMETRY_POINTS = 200;
+
+/**
+ * Downsample a way's raw OSM geometry so relayout()'s per-tick
+ * segment-projection scan (pickAnchorAndBearing) stays cheap even for
+ * long highways that come back from Overpass with thousands of vertices.
+ */
+function downsampleGeometry(
+  geometry: { lat: number; lon: number }[],
+): { lat: number; lon: number }[] {
+  if (geometry.length <= 2) return geometry;
+  let totalLength = 0;
+  for (let i = 0; i < geometry.length - 1; i++) totalLength += metersBetween(geometry[i], geometry[i + 1]);
+  const avgSpacing = totalLength / (geometry.length - 1);
+  if (avgSpacing >= GEOMETRY_TARGET_SPACING_M) return geometry; // already coarse enough
+
+  let stride = Math.max(1, Math.round(GEOMETRY_TARGET_SPACING_M / avgSpacing));
+  const minStrideForCap = Math.ceil(geometry.length / MAX_GEOMETRY_POINTS);
+  stride = Math.max(stride, minStrideForCap);
+  if (stride <= 1) return geometry;
+
+  const out: { lat: number; lon: number }[] = [];
+  for (let i = 0; i < geometry.length; i += stride) out.push(geometry[i]);
+  const last = geometry[geometry.length - 1];
+  if (out[out.length - 1] !== last) out.push(last);
+  return out;
 }
 
 /**

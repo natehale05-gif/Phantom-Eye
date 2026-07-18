@@ -50,6 +50,11 @@ interface OverpassWay {
 // Keep each way lightweight so height-sampling and rendering stay cheap.
 const MAX_PTS_PER_WAY = 48;
 
+// Cap each layer's per-view-tile cache so long panning sessions across many
+// distinct view tiles don't grow it unbounded — same bounded-LRU idea as
+// labelTexture.ts's canvas cache.
+const MAX_CACHE_TILES = 60;
+
 function downsampleCoords(coords: number[]): number[] {
   const n = coords.length / 2;
   if (n <= MAX_PTS_PER_WAY) return coords;
@@ -182,7 +187,11 @@ export class TrailLayers {
 
     const current = ++layer.token;
     let ways = layer.cache.get(key);
-    if (!ways) {
+    if (ways) {
+      // Touch for simple oldest-eviction recency ordering (Map preserves insertion order).
+      layer.cache.delete(key);
+      layer.cache.set(key, ways);
+    } else {
       if (layer.announce) this.statusHandler?.(id, 'loading', 0);
       // Cancel this layer's still-in-flight request for a now-stale view
       // before starting a new one — continuous panning would otherwise pile
@@ -203,6 +212,10 @@ export class TrailLayers {
       }
       ways = fetched;
       layer.cache.set(key, ways);
+      if (layer.cache.size > MAX_CACHE_TILES) {
+        const oldestKey = layer.cache.keys().next().value;
+        if (oldestKey !== undefined) layer.cache.delete(oldestKey);
+      }
     }
     this.draw(layer, ways);
     // Only mark this view handled once it has actually been drawn.
