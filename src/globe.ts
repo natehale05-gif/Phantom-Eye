@@ -86,6 +86,13 @@ export class Globe {
   private followExit?: () => void;
   private onFollowChange?: (on: boolean) => void;
   private navigating = false;
+  // Free-roam during turn-by-turn: a manual pan/zoom/rotate suspends the
+  // auto chase camera until this timer fires, then it smoothly resumes.
+  private navManualOverride = false;
+  private navResumeTimer?: number;
+  private navPointerListener?: () => void;
+  private lastCourseDeg = 0;
+  private static readonly NAV_RESUME_DELAY_MS = 8000;
 
   // Dropped place pins (search results / nearby categories).
   private placeMarkers: { entity: Cesium.Entity; place: PlacePin }[] = [];
@@ -844,22 +851,58 @@ export class Globe {
   beginNavigation(): void {
     this.navigating = true;
     this.setFollow(false);
+    this.navManualOverride = false;
+    if (this.navPointerListener) {
+      this.viewer.canvas.removeEventListener('pointerdown', this.navPointerListener);
+      this.viewer.canvas.removeEventListener('wheel', this.navPointerListener);
+    }
+    // Any manual touch/scroll during guidance free-roams the map — same
+    // "pointerdown drops out" idea as plain follow mode's `followExit`, but
+    // here it doesn't cancel navigation, just pauses the auto chase camera
+    // until NAV_RESUME_DELAY_MS of inactivity, then it smoothly resumes.
+    this.navPointerListener = () => this.onNavManualInteraction();
+    this.viewer.canvas.addEventListener('pointerdown', this.navPointerListener);
+    this.viewer.canvas.addEventListener('wheel', this.navPointerListener, { passive: true });
   }
 
   endNavigation(): void {
     this.navigating = false;
+    this.navManualOverride = false;
+    if (this.navResumeTimer !== undefined) {
+      window.clearTimeout(this.navResumeTimer);
+      this.navResumeTimer = undefined;
+    }
+    if (this.navPointerListener) {
+      this.viewer.canvas.removeEventListener('pointerdown', this.navPointerListener);
+      this.viewer.canvas.removeEventListener('wheel', this.navPointerListener);
+      this.navPointerListener = undefined;
+    }
   }
 
   isNavigating(): boolean {
     return this.navigating;
   }
 
+  private onNavManualInteraction(): void {
+    if (!this.navigating) return;
+    this.navManualOverride = true;
+    window.clearTimeout(this.navResumeTimer);
+    this.navResumeTimer = window.setTimeout(() => {
+      this.navResumeTimer = undefined;
+      this.navManualOverride = false;
+      this.updateNavCamera(this.lastCourseDeg, true);
+    }, Globe.NAV_RESUME_DELAY_MS);
+  }
+
   /**
    * Turn-by-turn chase camera: sit just behind and above the live GPS position,
    * looking along the direction of travel (`courseDeg`) — the Apple Maps 3D
-   * driving view. Called on every GPS fix while guiding.
+   * driving view. Called on every GPS fix while guiding; skipped while the
+   * user has manually taken over the camera (see `onNavManualInteraction`).
    */
   updateNavCamera(courseDeg: number, smooth = false): void {
+    this.lastCourseDeg = courseDeg;
+    if (this.navManualOverride) return;
     const s = this.locationState;
     if (!s) return;
     const hRad = toRad(courseDeg);
