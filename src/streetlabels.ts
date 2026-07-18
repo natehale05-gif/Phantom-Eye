@@ -391,6 +391,10 @@ export class StreetLabels {
       }
     }
 
+    // Sort once here (places, then major roads, then minor roads) rather
+    // than re-sorting a cloned array on every `relayout()` tick.
+    this.entries.sort((a, b) => priorityOf(a.item) - priorityOf(b.item));
+
     this.relayout();
     this.viewer.scene.requestRender();
     void this.refineInitialHeights(pending, token);
@@ -446,17 +450,17 @@ export class StreetLabels {
     if (this.entries.length === 0) return;
     const scene = this.viewer.scene;
     const altFade = altitudeFade(this.altitude());
-    const headingDeg = Cesium.Math.toDegrees(this.viewer.camera.heading);
     const groundCarto = Cesium.Cartographic.fromCartesian(this.viewer.camera.positionWC);
     const camLon = Cesium.Math.toDegrees(groundCarto.longitude);
     const camLat = Cesium.Math.toDegrees(groundCarto.latitude);
 
-    // Places first, then major roads, then minor roads.
-    const sorted = [...this.entries].sort((a, b) => priorityOf(a.item) - priorityOf(b.item));
+    // `this.entries` is kept pre-sorted (places, then major roads, then
+    // minor roads) by `draw()` — priority never changes over an entry's
+    // lifetime, so cloning + re-sorting every tick was wasted work.
     const accepted: { x: number; y: number; radius: number }[] = [];
     let rendered = false;
 
-    for (const entry of sorted) {
+    for (const entry of this.entries) {
       const primitive = entry.isRoad ? entry.billboard : entry.label;
       if (!primitive) continue;
 
@@ -477,9 +481,12 @@ export class StreetLabels {
 
       if (entry.billboard) {
         const { axis, flipped } = roadAlignedAxis(
+          scene,
           entry.billboard.position,
+          entry.item.lon,
+          entry.item.lat,
+          entry.surfaceHeight,
           entry.item.bearingDeg,
-          headingDeg,
           entry.flipped,
         );
         entry.flipped = flipped;
@@ -639,32 +646,68 @@ function tangentVector(position: Cesium.Cartesian3, bearingDeg: number): Cesium.
   return Cesium.Cartesian3.normalize(world, world);
 }
 
-function normalizeAngleDeg(deg: number): number {
-  let d = deg % 360;
-  if (d > 180) d -= 360;
-  if (d < -180) d += 360;
-  return d;
+const BEARING_SAMPLE_DISTANCE_M = 10;
+const FLIP_HYSTERESIS_PX = 3;
+
+/** A point `distanceM` metres from (lon, lat) along `bearingDeg` (standard spherical destination formula). */
+function destinationPoint(
+  lon: number,
+  lat: number,
+  bearingDeg: number,
+  distanceM: number,
+): { lon: number; lat: number } {
+  const R = 6371000;
+  const brng = Cesium.Math.toRadians(bearingDeg);
+  const lat1 = Cesium.Math.toRadians(lat);
+  const lon1 = Cesium.Math.toRadians(lon);
+  const angDist = distanceM / R;
+  const lat2 = Math.asin(
+    Math.sin(lat1) * Math.cos(angDist) + Math.cos(lat1) * Math.sin(angDist) * Math.cos(brng),
+  );
+  const lon2 =
+    lon1 +
+    Math.atan2(
+      Math.sin(brng) * Math.sin(angDist) * Math.cos(lat1),
+      Math.cos(angDist) - Math.sin(lat1) * Math.sin(lat2),
+    );
+  return { lon: Cesium.Math.toDegrees(lon2), lat: Cesium.Math.toDegrees(lat2) };
 }
 
 /**
  * A road's bearing is only known up to 180° (a line has no inherent
  * direction), so whichever way we pick, the text can end up upside-down from
- * some viewing angles as the camera orbits. Flip 180° when the bearing points
- * more than ~90° away from the camera's current heading, with a hysteresis
- * band (80°-100°) so it doesn't flip back and forth right at the boundary.
- * This is a heading-only approximation (doesn't account for camera pitch),
- * matching the scope agreed for this pass — a closer-to-exact fix would need
- * a full screen-space projection check.
+ * some viewing angles as the camera orbits. The camera-heading-only
+ * approximation this used to use ignored pitch/roll and got it wrong often
+ * enough to visibly show upside-down names — this instead measures directly:
+ * project the anchor and a point a few metres ahead along the bearing to
+ * screen space, and flip 180° whenever the "ahead" point would land *below*
+ * the anchor on screen (which, since `alignedAxis` aligns the billboard's up
+ * with that projected direction, means the text's up would point screen-down
+ * — upside-down). A small pixel-hysteresis band avoids flicker exactly at
+ * the horizon-crossing case where a road runs nearly edge-on to the camera.
  */
 function roadAlignedAxis(
+  scene: Cesium.Scene,
   position: Cesium.Cartesian3,
+  lon: number,
+  lat: number,
+  surfaceHeight: number,
   bearingDeg: number,
-  cameraHeadingDeg: number,
   currentlyFlipped: boolean,
 ): { axis: Cesium.Cartesian3; flipped: boolean } {
-  const diff = normalizeAngleDeg(bearingDeg - cameraHeadingDeg);
-  const threshold = currentlyFlipped ? 80 : 100;
-  const flipped = Math.abs(diff) > threshold;
+  let flipped = currentlyFlipped;
+  const anchorScreen = scene.cartesianToCanvasCoordinates(position);
+  if (anchorScreen) {
+    const ahead = destinationPoint(lon, lat, bearingDeg, BEARING_SAMPLE_DISTANCE_M);
+    const aheadScreen = scene.cartesianToCanvasCoordinates(
+      Cesium.Cartesian3.fromDegrees(ahead.lon, ahead.lat, surfaceHeight),
+    );
+    if (aheadScreen) {
+      const dy = aheadScreen.y - anchorScreen.y;
+      if (!flipped && dy > FLIP_HYSTERESIS_PX) flipped = true;
+      else if (flipped && dy < -FLIP_HYSTERESIS_PX) flipped = false;
+    }
+  }
   const finalBearing = flipped ? bearingDeg + 180 : bearingDeg;
   return { axis: tangentVector(position, finalBearing), flipped };
 }
