@@ -16,6 +16,12 @@ import {
 
 type NavState = 'idle' | 'planning' | 'guiding';
 
+// Require this many meters off-route AND this long spent that far off before
+// rerouting — a single noisy GPS fix shouldn't trigger a reroute, only a
+// genuine, sustained deviation (e.g. actually taking a different road).
+const OFF_ROUTE_METERS = 55;
+const OFF_ROUTE_CONFIRM_MS = 3000;
+
 const MODE_LABELS: { id: TravelMode; label: string; icon: string }[] = [
   { id: 'driving', label: 'Drive', icon: modeIcon('car') },
   { id: 'walking', label: 'Walk', icon: modeIcon('walk') },
@@ -44,6 +50,7 @@ export class Navigator {
   // Off-route rerouting.
   private rerouting = false;
   private lastReroute = 0;
+  private offRouteSince: number | null = null;
 
   constructor(
     private readonly shell: Shell,
@@ -110,6 +117,7 @@ export class Navigator {
     this.stepAlong = route.steps.map((s) => projectOnRoute(s.location, this.coords, this.cum).along);
   }
 
+  /** Planning view: selected route plus dimmed alternates to choose between. */
   private drawRoutes(): void {
     const selected = this.routes[this.routeIdx]?.coordinates ?? [];
     const others = this.routes.filter((_, i) => i !== this.routeIdx).map((r) => r.coordinates);
@@ -228,9 +236,14 @@ export class Navigator {
     if (!this.route) return;
     const { along, bearing, offset } = projectOnRoute(pos, this.coords, this.cum);
 
-    // Wandered off the route → ask for a fresh one.
-    if (offset > 55 && !this.arrived) {
-      void this.reroute(pos);
+    // Wandered off the route → ask for a fresh one, but only once we've been
+    // genuinely off it for a few seconds (not just a single noisy GPS fix) —
+    // this is what catches "decided to go a different way," not GPS jitter.
+    if (offset > OFF_ROUTE_METERS && !this.arrived) {
+      if (this.offRouteSince === null) this.offRouteSince = Date.now();
+      if (Date.now() - this.offRouteSince >= OFF_ROUTE_CONFIRM_MS) void this.reroute(pos);
+    } else {
+      this.offRouteSince = null;
     }
 
     let up = this.stepAlong.findIndex((sa, i) => i > 0 && sa > along + 2);
@@ -253,15 +266,20 @@ export class Navigator {
     if (Date.now() - this.lastReroute < 5000) return;
     this.rerouting = true;
     this.lastReroute = Date.now();
+    this.toast('Rerouting…', 2500);
     try {
       const routes = await fetchRoutes(pos, this.dest);
       if (this.state !== 'guiding') return;
-      this.toast('Rerouting…', 1200);
       this.routes = routes;
       this.useRoute(0);
-      this.drawRoutes();
+      // Just the chosen line while actively driving — alternates are a
+      // planning-time concept, not something to clutter the live nav view.
+      this.globe.showRoute(this.route?.coordinates ?? []);
+      // Refresh guidance/trip bar and cut the camera to the new route right
+      // away, instead of waiting for the next GPS fix to catch up.
+      this.advance(pos, true);
     } catch {
-      /* keep the current route; try again on the next stray fix */
+      this.toast("Couldn't find a new route — keeping the current one.");
     } finally {
       this.rerouting = false;
     }
@@ -353,6 +371,7 @@ export class Navigator {
     this.routes = [];
     this.dest = null;
     this.stepIndex = 0;
+    this.offRouteSince = null;
     this.shell.root.classList.remove('is-guiding');
     this.shell.navPanel.classList.remove('is-visible');
     this.shell.guidance.classList.remove('is-visible');
