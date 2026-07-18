@@ -63,6 +63,14 @@ interface LabelItem {
   /** Compass bearing at the anchor point; unused (0) for places. */
   bearingDeg: number;
   roadClass?: RoadClass;
+  /**
+   * Raw way geometry (roads only). Kept so `relayout()` can re-derive the
+   * anchor point against the *live* camera position every tick, instead of
+   * the anchor staying frozen at wherever the camera was when this ~1.1km
+   * grid cell was first fetched — that staleness is what let labels drift
+   * away from (and behind) the visible road as you travel through a cell.
+   */
+  geometry?: { lat: number; lon: number }[];
 }
 
 interface DrawnEntry {
@@ -270,6 +278,7 @@ export class StreetLabels {
           kind: 'road',
           bearingDeg,
           roadClass: roadClassOf(el.tags),
+          geometry: el.geometry,
         });
       }
     }
@@ -344,6 +353,9 @@ export class StreetLabels {
     const scene = this.viewer.scene;
     const altFade = altitudeFade(this.altitude());
     const headingDeg = Cesium.Math.toDegrees(this.viewer.camera.heading);
+    const groundCarto = Cesium.Cartographic.fromCartesian(this.viewer.camera.positionWC);
+    const camLon = Cesium.Math.toDegrees(groundCarto.longitude);
+    const camLat = Cesium.Math.toDegrees(groundCarto.latitude);
 
     // Places first, then major roads, then minor roads.
     const sorted = [...this.entries].sort((a, b) => priorityOf(a.item) - priorityOf(b.item));
@@ -353,6 +365,17 @@ export class StreetLabels {
     for (const entry of sorted) {
       const primitive = entry.isRoad ? entry.billboard : entry.label;
       if (!primitive) continue;
+
+      if (entry.billboard && entry.item.geometry) {
+        // Re-anchor to the point on the road nearest the *live* camera
+        // position every tick, rather than leaving it frozen at wherever the
+        // camera was when this grid cell's Overpass fetch last ran.
+        const { lon, lat, bearingDeg } = pickAnchorAndBearing(entry.item.geometry, camLon, camLat);
+        entry.item.lon = lon;
+        entry.item.lat = lat;
+        entry.item.bearingDeg = bearingDeg;
+        entry.billboard.position = Cesium.Cartesian3.fromDegrees(lon, lat, 0);
+      }
 
       if (entry.billboard) {
         const { axis, flipped } = roadAlignedAxis(
