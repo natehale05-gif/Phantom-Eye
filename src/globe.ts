@@ -60,10 +60,10 @@ const toRad = Cesium.Math.toRadians;
 const ACCENT = Cesium.Color.fromCssColorString('#0A84FF'); // "you are here" GPS dot (blue)
 const WHITE = Cesium.Color.WHITE;
 const TRACK_COLOR = Cesium.Color.fromCssColorString('#FF375F');
-// Only snap the location dot onto the route (and trim behind it) when GPS is
-// within this many meters of it — otherwise the user is genuinely off-route
-// (a reroute is likely already in flight) and snapping would glue the dot to
-// the wrong road.
+// Only bend the route to connect to your real position when GPS is within
+// this many meters of it — otherwise you're genuinely off-route (a reroute
+// is likely already in flight) and stretching the line out to reach you
+// would look wrong.
 const ROUTE_SNAP_MAX_OFFSET_M = 30;
 
 export class Globe {
@@ -606,21 +606,8 @@ export class Globe {
   /** Update (or create) the user location dot, keeping it on the surface. */
   updateLocation(fix: LocationFix): void {
     const height = this.locationState?.height ?? 0;
-    let lon = fix.lon;
-    let lat = fix.lat;
-
-    // While actively navigating, snap the dot onto the route itself (rather
-    // than raw, noisy GPS) whenever we're close enough to it, and trim the
-    // drawn route behind that point — Apple-Maps-style "the line disappears
-    // behind you." If we're too far off the route (about to reroute), fall
-    // back to the raw fix so the dot doesn't snap onto the wrong road.
-    if (this.navigating && this.drivePath.length >= 2) {
-      const proj = this.projectOntoDrivePath(fix.lon, fix.lat);
-      if (proj && proj.offset < ROUTE_SNAP_MAX_OFFSET_M) {
-        [lon, lat] = proj.snappedLonLat;
-        this.trimDrivePathBehind(proj);
-      }
-    }
+    const lon = fix.lon;
+    const lat = fix.lat;
 
     const state: LocationState = {
       lon,
@@ -638,6 +625,19 @@ export class Globe {
     this.followTick();
     this.animateLocationTo(state.position);
     this.viewer.scene.requestRender();
+
+    // While actively navigating, bend the drawn route so its near end always
+    // touches your real position (rather than moving your dot onto the
+    // route) and trim away what's behind that — Apple-Maps-style "the line
+    // disappears behind you." If you're too far from the route (about to
+    // reroute), leave the route alone rather than stretching a long
+    // connector out to an off-route position.
+    if (this.navigating && this.drivePath.length >= 2) {
+      const proj = this.projectOntoDrivePath(lon, lat);
+      if (proj && proj.offset < ROUTE_SNAP_MAX_OFFSET_M) {
+        this.connectRouteTo(lon, lat, height, proj);
+      }
+    }
 
     void this.refineLocationHeight(lon, lat);
   }
@@ -687,11 +687,8 @@ export class Globe {
     this.locationAnimRaf = requestAnimationFrame(tick);
   }
 
-  /** Nearest point on the currently-drawn route to (lon, lat), for dot-snapping. */
-  private projectOntoDrivePath(
-    lon: number,
-    lat: number,
-  ): { segIndex: number; t: number; offset: number; snappedLonLat: LngLat; snappedCart: Cesium.Cartesian3 } | null {
+  /** How far along the currently-drawn route (lon, lat) sits, and how far off it. */
+  private projectOntoDrivePath(lon: number, lat: number): { segIndex: number; t: number; offset: number } | null {
     const path = this.drivePath;
     if (path.length < 2) return null;
     const kx = Math.cos(toRad(lat));
@@ -717,21 +714,19 @@ export class Globe {
         bestT = t;
       }
     }
-    const a = path[bestSeg].lonlat;
-    const b = path[bestSeg + 1].lonlat;
-    const snappedLonLat: LngLat = [a[0] + (b[0] - a[0]) * bestT, a[1] + (b[1] - a[1]) * bestT];
-    const snappedCart = Cesium.Cartesian3.lerp(path[bestSeg].cart, path[bestSeg + 1].cart, bestT, new Cesium.Cartesian3());
     const offset = Math.sqrt(best) * 111_320;
-    return { segIndex: bestSeg, t: bestT, offset, snappedLonLat, snappedCart };
+    return { segIndex: bestSeg, t: bestT, offset };
   }
 
-  /** Cut the drawn route back to (and no further than) the current snapped position. */
-  private trimDrivePathBehind(proj: { segIndex: number; t: number; snappedLonLat: LngLat; snappedCart: Cesium.Cartesian3 }): void {
-    if (proj.segIndex === 0 && proj.t <= 0.001) return; // nothing behind yet
-    this.drivePath = [
-      { cart: proj.snappedCart, lonlat: proj.snappedLonLat },
-      ...this.drivePath.slice(proj.segIndex + 1),
-    ];
+  /**
+   * Bend the drawn route so its near end touches your real position and
+   * drop whatever's now behind it — the route "snaps to you" rather than
+   * your dot snapping onto the route, so the line always connects to where
+   * you actually are even if GPS sits a little off the road.
+   */
+  private connectRouteTo(lon: number, lat: number, height: number, proj: { segIndex: number }): void {
+    const cart = Cesium.Cartesian3.fromDegrees(lon, lat, height + 1.5);
+    this.drivePath = [{ cart, lonlat: [lon, lat] }, ...this.drivePath.slice(proj.segIndex + 1)];
     this.driveCumulative = cumulativeDistances(this.drivePath.map((p) => p.lonlat));
   }
 
