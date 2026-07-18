@@ -52,6 +52,12 @@ export class Navigator {
   private lastReroute = 0;
   private offRouteSince: number | null = null;
 
+  // Last route segment matched by projectOnRoute, so the next GPS fix can
+  // search a small window around it instead of rescanning the whole route
+  // (routes can have thousands of points). -1 means "no hint yet, do a full
+  // scan" — reset whenever the route itself changes (useRoute()).
+  private lastMatchedSeg = -1;
+
   constructor(
     private readonly shell: Shell,
     private readonly globe: Globe,
@@ -114,6 +120,7 @@ export class Navigator {
     this.coords = route.coordinates;
     this.cum = cumulative(route.coordinates);
     this.total = this.cum[this.cum.length - 1] || route.distance;
+    this.lastMatchedSeg = -1;
     this.stepAlong = route.steps.map((s) => projectOnRoute(s.location, this.coords, this.cum).along);
   }
 
@@ -234,7 +241,8 @@ export class Navigator {
 
   private advance(pos: LngLat, smoothCam: boolean): void {
     if (!this.route) return;
-    const { along, bearing, offset } = projectOnRoute(pos, this.coords, this.cum);
+    const { along, bearing, offset, seg } = projectOnRoute(pos, this.coords, this.cum, this.lastMatchedSeg);
+    this.lastMatchedSeg = seg;
 
     // Wandered off the route → ask for a fresh one, but only once we've been
     // genuinely off it for a few seconds (not just a single noisy GPS fix) —
@@ -404,26 +412,45 @@ function cumulative(coords: LngLat[]): number[] {
   return cum;
 }
 
+// How many segments each direction of a hinted last-match to search, instead
+// of rescanning the whole route on every GPS fix (routes can have thousands
+// of points). The vehicle moves monotonically along the route almost always,
+// so a window around the last match reliably contains the true nearest
+// segment in normal driving.
+const PROJECT_WINDOW_SEGMENTS = 40;
+
 /**
  * Project a point onto the route: how far along it is (meters), the heading of
- * the road there, and how far off the route the point is (meters). Uses a local
- * equirectangular approximation, accurate over the short spans between vertices.
+ * the road there, how far off the route the point is (meters), and which
+ * segment matched (feed back in as `hintSeg` on the next call to search only
+ * a small window around it instead of the whole route). Uses a local
+ * equirectangular approximation, accurate over the short spans between
+ * vertices. Pass `hintSeg = -1` (the default) to force a full scan — used
+ * for the one-off per-step projection in `useRoute()`, and naturally
+ * whatever a fresh/rerouted `Navigator` starts with.
  */
 function projectOnRoute(
   pos: LngLat,
   coords: LngLat[],
   cum: number[],
-): { along: number; bearing: number; offset: number } {
-  if (coords.length < 2) return { along: 0, bearing: 0, offset: 0 };
+  hintSeg = -1,
+): { along: number; bearing: number; offset: number; seg: number } {
+  if (coords.length < 2) return { along: 0, bearing: 0, offset: 0, seg: 0 };
   const kx = Math.cos((pos[1] * Math.PI) / 180);
-  const xy = (p: LngLat): [number, number] => [(p[0] - pos[0]) * kx, p[1] - pos[1]];
+  const lastSeg = coords.length - 2;
+  const iStart = hintSeg >= 0 ? Math.max(0, hintSeg - PROJECT_WINDOW_SEGMENTS) : 0;
+  const iEnd = hintSeg >= 0 ? Math.min(lastSeg, hintSeg + PROJECT_WINDOW_SEGMENTS) : lastSeg;
 
   let best = Infinity;
   let bestAlong = cum[cum.length - 1];
-  let bestSeg = coords.length - 2;
-  for (let i = 0; i < coords.length - 1; i++) {
-    const [ax, ay] = xy(coords[i]);
-    const [bx, by] = xy(coords[i + 1]);
+  let bestSeg = lastSeg;
+  for (let i = iStart; i <= iEnd; i++) {
+    const pa = coords[i];
+    const pb = coords[i + 1];
+    const ax = (pa[0] - pos[0]) * kx;
+    const ay = pa[1] - pos[1];
+    const bx = (pb[0] - pos[0]) * kx;
+    const by = pb[1] - pos[1];
     const abx = bx - ax;
     const aby = by - ay;
     const len2 = abx * abx + aby * aby || 1e-12;
@@ -440,7 +467,7 @@ function projectOnRoute(
   }
   // best is in squared degrees-of-latitude units → convert to meters.
   const offset = Math.sqrt(best) * 111_320;
-  return { along: bestAlong, bearing: bearingDeg(coords[bestSeg], coords[bestSeg + 1]), offset };
+  return { along: bestAlong, bearing: bearingDeg(coords[bestSeg], coords[bestSeg + 1]), offset, seg: bestSeg };
 }
 
 /** Clock time of arrival, e.g. "3:45 PM", given seconds remaining. */
