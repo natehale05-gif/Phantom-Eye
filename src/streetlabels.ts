@@ -444,37 +444,73 @@ function metersBetween(a: { lat: number; lon: number }, b: { lat: number; lon: n
 }
 
 /**
- * Pick the point in a way's geometry closest to the query center, and
- * compute a bearing sampled over a short walk in each direction so a single
- * short/noisy OSM segment doesn't produce a jittery bearing.
+ * Project the query center onto the nearest point ALONG the way's geometry
+ * (not just the nearest vertex), and compute a bearing sampled over a short
+ * walk in each direction so a single short/noisy OSM segment doesn't produce
+ * a jittery bearing.
+ *
+ * Nearest-vertex anchoring (the previous approach) made the label hop
+ * discretely between OSM's vertices — which for a long straight road are
+ * often tens of metres apart — as the camera moved and `relayout()`
+ * re-anchored every tick. That discrete hopping is what still read as
+ * "floating"/jittery even after the anchor stopped freezing per grid-cell.
+ * Projecting onto the segment instead gives a continuously-varying point,
+ * so the label glides smoothly along the road.
  */
 function pickAnchorAndBearing(
   geometry: { lat: number; lon: number }[],
   centerLon: number,
   centerLat: number,
 ): { lon: number; lat: number; bearingDeg: number } {
-  let bestIdx = 0;
-  let bestDist = Infinity;
-  for (let i = 0; i < geometry.length; i++) {
-    const d = metersBetween(geometry[i], { lat: centerLat, lon: centerLon });
-    if (d < bestDist) {
-      bestDist = d;
-      bestIdx = i;
+  if (geometry.length < 2) {
+    const only = geometry[0] ?? { lat: centerLat, lon: centerLon };
+    return { lon: only.lon, lat: only.lat, bearingDeg: 0 };
+  }
+
+  const kx = Math.max(Math.cos(Cesium.Math.toRadians(centerLat)), 0.2);
+  const toXY = (p: { lat: number; lon: number }): [number, number] => [
+    (p.lon - centerLon) * kx,
+    p.lat - centerLat,
+  ];
+
+  let best = Infinity;
+  let bestSeg = 0;
+  let bestT = 0;
+  for (let i = 0; i < geometry.length - 1; i++) {
+    const [ax, ay] = toXY(geometry[i]);
+    const [bx, by] = toXY(geometry[i + 1]);
+    const abx = bx - ax;
+    const aby = by - ay;
+    const len2 = abx * abx + aby * aby || 1e-12;
+    let t = -(ax * abx + ay * aby) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const cx = ax + abx * t;
+    const cy = ay + aby * t;
+    const d2 = cx * cx + cy * cy;
+    if (d2 < best) {
+      best = d2;
+      bestSeg = i;
+      bestT = t;
     }
   }
-  const anchor = geometry[bestIdx];
+  const segA = geometry[bestSeg];
+  const segB = geometry[bestSeg + 1];
+  const anchor = {
+    lon: segA.lon + (segB.lon - segA.lon) * bestT,
+    lat: segA.lat + (segB.lat - segA.lat) * bestT,
+  };
 
-  let behind = anchor;
-  let acc = 0;
-  for (let i = bestIdx; i > 0 && acc < MIN_BEARING_SAMPLE_M; i--) {
-    acc += metersBetween(geometry[i], geometry[i - 1]);
+  let behind = segA;
+  let acc = metersBetween(anchor, segA);
+  for (let i = bestSeg; i > 0 && acc < MIN_BEARING_SAMPLE_M; i--) {
     behind = geometry[i - 1];
+    acc += metersBetween(geometry[i], geometry[i - 1]);
   }
-  let ahead = anchor;
-  acc = 0;
-  for (let i = bestIdx; i < geometry.length - 1 && acc < MIN_BEARING_SAMPLE_M; i++) {
-    acc += metersBetween(geometry[i], geometry[i + 1]);
+  let ahead = segB;
+  acc = metersBetween(anchor, segB);
+  for (let i = bestSeg + 1; i < geometry.length - 1 && acc < MIN_BEARING_SAMPLE_M; i++) {
     ahead = geometry[i + 1];
+    acc += metersBetween(geometry[i], geometry[i + 1]);
   }
   const bearingDeg =
     behind.lon === ahead.lon && behind.lat === ahead.lat
