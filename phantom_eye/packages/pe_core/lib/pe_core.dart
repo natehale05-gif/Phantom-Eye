@@ -12,4 +12,5 @@ export 'src/geo/lng_lat.dart';
 export 'src/models/location_fix.dart';
 export 'src/models/route.dart';
 export 'src/util/lru_cache.dart';
+export 'src/util/race.dart';
 export 'src/util/rate_limit.dart';
