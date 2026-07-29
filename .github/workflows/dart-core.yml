@@ -1,0 +1,63 @@
+name: Dart core packages
+
+# Analyzes and tests the pure-Dart foundation of the Flutter rewrite
+# (phantom_eye/packages/pe_core and pe_domain). These packages deliberately
+# have no Flutter dependency, so this job needs only the Dart SDK and runs in
+# seconds — which is the point: the navigation logic is verifiable in CI
+# rather than only by driving.
+
+on:
+  push:
+    branches:
+      - main
+      - claude/gas-price-tracker-ui1mpd
+    paths:
+      - 'phantom_eye/**'
+      - '.github/workflows/dart-core.yml'
+  pull_request:
+    paths:
+      - 'phantom_eye/**'
+      - '.github/workflows/dart-core.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: phantom_eye
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Dart
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: '3.12.2'
+
+      - name: Install dependencies
+        run: dart pub get
+
+      - name: Verify formatting
+        run: dart format --output=none --set-exit-if-changed .
+
+      - name: Analyze
+        run: dart analyze --fatal-infos
+
+      - name: Regenerate the legacy parity fixture
+        # Rebuilding it here (rather than trusting the committed copy) means
+        # CI fails if the Dart port and the legacy TypeScript ever diverge.
+        run: |
+          node tool/gen_legacy_fixture.mjs \
+            > packages/pe_domain/test/fixtures/legacy_reference.json
+
+      - name: Test pe_core
+        run: dart test
+        working-directory: phantom_eye/packages/pe_core
+
+      - name: Test pe_domain
+        run: dart test
+        working-directory: phantom_eye/packages/pe_domain

@@ -1,0 +1,23 @@
+include: package:lints/recommended.yaml
+
+analyzer:
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+  errors:
+    # The pure-Dart layer must stay pure. `pe_core` and `pe_domain` declare no
+    # Flutter dependency, so any Flutter import is already an unresolved-URI
+    # error — promoting it here makes the failure loud rather than a warning.
+    uri_does_not_exist: error
+    depend_on_referenced_packages: error
+
+linter:
+  rules:
+    - always_declare_return_types
+    - avoid_dynamic_calls
+    - prefer_final_locals
+    - prefer_const_constructors
+    - prefer_const_declarations
+    - unawaited_futures
+    - use_super_parameters

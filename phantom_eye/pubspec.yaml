@@ -1,0 +1,17 @@
+name: phantom_eye_workspace
+publish_to: none
+
+# Dart pub workspace root. Members share one lockfile and one `.dart_tool`,
+# so `dart test` / `dart analyze` at this level covers every package.
+#
+# Only the pure-Dart packages are listed today. The Flutter packages
+# (pe_data, pe_map, pe_map_maplibre, pe_map_cesium, pe_map_flutter_map,
+# pe_ui, and apps/phantom_eye) join this list as they are created — they
+# need the Flutter SDK, which the pure-Dart layer deliberately does not.
+
+environment:
+  sdk: ^3.12.0
+
+workspace:
+  - packages/pe_core
+  - packages/pe_domain

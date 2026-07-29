@@ -1,0 +1,16 @@
+name: pe_domain
+description: Pure-Dart domain logic for Phantom Eye — navigation state machines, route projection, camera policy. No Flutter, no map engine.
+version: 0.1.0
+publish_to: none
+
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  pe_core: ^0.1.0
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^6.0.0

@@ -1,0 +1,13 @@
+name: pe_core
+description: Pure-Dart geometry, models and utilities for Phantom Eye. No Flutter, no map engine.
+version: 0.1.0
+publish_to: none
+
+resolution: workspace
+
+environment:
+  sdk: ^3.12.0
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^6.0.0
