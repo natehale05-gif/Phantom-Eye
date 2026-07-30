@@ -18,6 +18,7 @@ library;
 
 export 'src/camera/camera_policy.dart';
 export 'src/navigation/off_route_detector.dart';
+export 'src/places/categories.dart';
 export 'src/places/opening_hours.dart';
 export 'src/navigation/route_projector.dart';
 export 'src/navigation/route_snapper.dart';

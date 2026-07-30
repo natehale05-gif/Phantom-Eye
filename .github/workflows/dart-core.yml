@@ -38,7 +38,19 @@ jobs:
         with:
           sdk: '3.12.2'
 
-      - name: Install dependencies
+      - name: Set up Node
+        # Needed to regenerate the parity fixtures from the legacy TypeScript.
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install JS dependencies
+        # esbuild, used to compile src/categories.ts for the category fixture.
+        run: npm ci
+        working-directory: .
+
+      - name: Install Dart dependencies
         run: dart pub get
 
       - name: Verify formatting
@@ -47,12 +59,16 @@ jobs:
       - name: Analyze
         run: dart analyze --fatal-infos
 
-      - name: Regenerate the legacy parity fixture
-        # Rebuilding it here (rather than trusting the committed copy) means
-        # CI fails if the Dart port and the legacy TypeScript ever diverge.
+      - name: Regenerate the parity fixtures
+        # Rebuilding these here (rather than trusting the committed copies)
+        # means CI fails if the Dart port and the legacy TypeScript ever
+        # diverge. The category fixture compiles the REAL src/categories.ts,
+        # so there is no duplicated category table to drift.
         run: |
           node tool/gen_legacy_fixture.mjs \
             > packages/pe_domain/test/fixtures/legacy_reference.json
+          node tool/gen_category_fixture.mjs \
+            > packages/pe_domain/test/fixtures/category_reference.json
 
       - name: Test pe_core
         run: dart test
