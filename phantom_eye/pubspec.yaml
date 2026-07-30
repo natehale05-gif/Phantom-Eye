@@ -14,4 +14,5 @@ environment:
 
 workspace:
   - packages/pe_core
+  - packages/pe_data
   - packages/pe_domain

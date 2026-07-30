@@ -1,10 +1,10 @@
 name: Dart core packages
 
 # Analyzes and tests the pure-Dart foundation of the Flutter rewrite
-# (phantom_eye/packages/pe_core and pe_domain). These packages deliberately
-# have no Flutter dependency, so this job needs only the Dart SDK and runs in
-# seconds — which is the point: the navigation logic is verifiable in CI
-# rather than only by driving.
+# (phantom_eye/packages/pe_core, pe_data and pe_domain). These packages
+# deliberately have no Flutter dependency, so this job needs only the Dart SDK
+# and runs in seconds — which is the point: the navigation logic is verifiable
+# in CI rather than only by driving.
 
 on:
   push:
@@ -46,7 +46,8 @@ jobs:
           cache: npm
 
       - name: Install JS dependencies
-        # esbuild, used to compile src/categories.ts for the category fixture.
+        # esbuild, used to compile src/categories.ts and src/routing.ts for
+        # the parity fixtures.
         run: npm ci
         working-directory: .
 
@@ -62,17 +63,24 @@ jobs:
       - name: Regenerate the parity fixtures
         # Rebuilding these here (rather than trusting the committed copies)
         # means CI fails if the Dart port and the legacy TypeScript ever
-        # diverge. The category fixture compiles the REAL src/categories.ts,
-        # so there is no duplicated category table to drift.
+        # diverge. The category and routing fixtures compile the REAL
+        # src/categories.ts and src/routing.ts, so there is no duplicated
+        # category table or maneuver table to drift.
         run: |
           node tool/gen_legacy_fixture.mjs \
             > packages/pe_domain/test/fixtures/legacy_reference.json
           node tool/gen_category_fixture.mjs \
             > packages/pe_domain/test/fixtures/category_reference.json
+          node tool/gen_routing_fixture.mjs \
+            > packages/pe_data/test/fixtures/routing_reference.json
 
       - name: Test pe_core
         run: dart test
         working-directory: phantom_eye/packages/pe_core
+
+      - name: Test pe_data
+        run: dart test
+        working-directory: phantom_eye/packages/pe_data
 
       - name: Test pe_domain
         run: dart test

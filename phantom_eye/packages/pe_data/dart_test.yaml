@@ -1,0 +1,6 @@
+# Declares the tags used in this package's suites, so `dart test` does not
+# warn about them. `parity` marks suites that cross-check the Dart port
+# against the legacy TypeScript via a generated fixture; they are part of the
+# default run, and can be isolated with `dart test -t parity`.
+tags:
+  parity:
