@@ -109,6 +109,62 @@ final class Place {
   String? get osmKey =>
       (osmType != null && osmId != null) ? '${osmType!.osmName}/$osmId' : null;
 
+  /// Parse a stored place, or null if it is not usable.
+  ///
+  /// The JSON is **flat**, with the [PlaceDetails] fields spread alongside the
+  /// rest, because that is the shape the legacy app wrote to `localStorage`
+  /// (`PlaceResult` extended `PlaceDetails` rather than composing it). Keeping
+  /// it means saved recents survive a migration.
+  ///
+  /// Returning null rather than throwing lets one corrupt entry be dropped
+  /// while the rest of a stored list survives — the legacy loader validated
+  /// only that the outer value was an array, so a truncated write produced a
+  /// row with no coordinate that broke rendering.
+  static Place? fromJson(Object? json) {
+    if (json is! Map) return null;
+    final name = json['name'];
+    final lon = json['lon'];
+    final lat = json['lat'];
+    if (name is! String || name.isEmpty) return null;
+    if (lon is! num || lat is! num || !lon.isFinite || !lat.isFinite) {
+      return null;
+    }
+    return Place(
+      name: name,
+      detail: json['detail'] is String ? json['detail'] as String : '',
+      position: LngLat(lon.toDouble(), lat.toDouble()),
+      category: json['category'] is String ? json['category'] as String : '',
+      categoryId: json['categoryId'] is String
+          ? json['categoryId'] as String
+          : null,
+      osmType: OsmType.parse(json['osmType']),
+      osmId: json['osmId'] is num ? (json['osmId'] as num).toInt() : null,
+      details: PlaceDetails(
+        phone: json['phone'] is String ? json['phone'] as String : null,
+        website: json['website'] is String ? json['website'] as String : null,
+        openingHours: json['openingHours'] is String
+            ? json['openingHours'] as String
+            : null,
+        address: json['address'] is String ? json['address'] as String : null,
+      ),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'detail': detail,
+    'lon': position.lon,
+    'lat': position.lat,
+    'category': category,
+    'categoryId': ?categoryId,
+    'osmType': ?osmType?.osmName,
+    'osmId': ?osmId,
+    'phone': ?details.phone,
+    'website': ?details.website,
+    'openingHours': ?details.openingHours,
+    'address': ?details.address,
+  };
+
   Place withDetails(PlaceDetails extra) => Place(
     name: name,
     detail: detail,

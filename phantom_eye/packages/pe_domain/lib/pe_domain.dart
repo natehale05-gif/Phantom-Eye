@@ -17,11 +17,19 @@
 library;
 
 export 'src/camera/camera_policy.dart';
+export 'src/field/track_recorder.dart';
+export 'src/field/waypoint_store.dart';
+export 'src/field/waypoint_styles.dart';
 export 'src/navigation/off_route_detector.dart';
 export 'src/offline/download_area_planner.dart';
 export 'src/places/categories.dart';
+export 'src/places/curated_places.dart';
+export 'src/places/gas_prices.dart';
 export 'src/places/nearby.dart';
 export 'src/places/opening_hours.dart';
+export 'src/places/recent_places.dart';
 export 'src/navigation/route_projector.dart';
 export 'src/navigation/route_snapper.dart';
+export 'src/settings/layer_settings.dart';
+export 'src/trails/trail_layers.dart';
 export 'src/weather/weather_codes.dart';

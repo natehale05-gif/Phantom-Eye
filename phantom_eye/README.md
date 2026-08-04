@@ -18,13 +18,16 @@ The three pure-Dart packages — the foundation the rest of the app is built on.
 
 | Package | Contents |
 |---|---|
-| `packages/pe_core` | Geometry (`haversine`, `bearingDeg`, `destinationPoint`, `projectPointOnSegment`, `cumulativeDistances`), `LngLat`/`LatLngBounds`, route / place / weather / location-fix models, `LruCache`, `MinInterval`, `GenerationToken`, `raceForFirstSuccess`, formatters |
-| `packages/pe_domain` | `RouteProjector` (windowed), `OffRouteDetector`, `RouteSnapper`, `ArrivalDetector`, `CameraPolicy`, `OpeningHoursParser`, the category registry + `matchCategory`, `DownloadAreaPlanner`, nearby query building + ranking, WMO codes and surf rating |
+| `packages/pe_core` | Geometry (`haversine`, `bearingDeg`, `destinationPoint`, `projectPointOnSegment`, `cumulativeDistances`), `LngLat`/`LatLngBounds`, models (route, place, weather, waypoint, track, gas price, curated place, location fix), `KeyValueStore`, `LruCache`, `MinInterval`, `GenerationToken`, `raceForFirstSuccess`, formatters |
+| `packages/pe_domain` | `RouteProjector` (windowed), `OffRouteDetector`, `RouteSnapper`, `ArrivalDetector`, `CameraPolicy`, `OpeningHoursParser`, the category registry + `matchCategory`, `DownloadAreaPlanner`, nearby query building + ranking, trail queries/grading/view math, waypoints, `TrackRecorder`, gas prices, recents, curated places, layer settings, WMO codes and surf rating |
 | `packages/pe_data` | Network clients and response parsers: Overpass (mirror-raced), OSRM, Photon search + reverse, BigDataCloud fallback, Open-Meteo forecast + marine |
 
 `pe_data` keeps every client behind an injected `http.Client` and every
 parser as a pure function over decoded JSON, so the whole layer is tested
-with `MockClient` and fixtures — no network, no device.
+with `MockClient` and fixtures — no network, no device. Persistence sits
+behind `pe_core`'s `KeyValueStore` for the same reason; the Flutter layer
+will back it with `shared_preferences`. **The Cesium ion token must never go
+there** — it belongs in secure storage, a `--dart-define`, or onboarding.
 
 ### Why these first
 
@@ -80,25 +83,33 @@ port:
 | `pe_domain/test/legacy_parity_test.dart` | `tool/gen_legacy_fixture.mjs` | `bearingDeg`, `haversine`, `formatDistance`, `formatDuration`, windowed `projectOnRoute` |
 | `pe_domain/test/categories_test.dart` | `tool/gen_category_fixture.mjs` | the whole category table and `matchCategory` |
 | `pe_data/test/routing_parity_test.dart` | `tool/gen_routing_fixture.mjs` | maneuver `classify`/`describe` across 660 cases, plus `parseRoute` leg flattening |
+| `pe_domain/test/places_parity_test.dart` | `tool/gen_places_fixture.mjs` | the 8 curated destinations and their hand-tuned camera framings |
 
-The category and routing generators compile and import the **real**
-`src/categories.ts` and `src/routing.ts` through esbuild, so there is no
-second copy of those tables to drift. `gen_legacy_fixture.mjs` embeds
-verbatim copies of small pure functions instead, and must be kept in sync by
-hand when the legacy source changes.
+The category, routing and places generators compile and import the **real**
+`src/categories.ts`, `src/routing.ts` and `src/places.ts` through esbuild, so
+there is no second copy of those tables to drift. `gen_legacy_fixture.mjs`
+embeds verbatim copies of small pure functions instead, and must be kept in
+sync by hand when the legacy source changes.
 
-Measured agreement is exact for segment index, along-distance, offset and
-every maneuver string; bearings agree to ~1e-9 degrees, the two runtimes
-differing only in floating-point operation order.
+Measured agreement is exact for segment index, along-distance, offset, every
+maneuver string and every camera framing; bearings agree to ~1e-9 degrees,
+the two runtimes differing only in floating-point operation order.
 
-CI regenerates all three fixtures before running the suites, so divergence
+CI regenerates all four fixtures before running the suites, so divergence
 fails the build rather than sitting in a stale committed copy.
 
 ```sh
 node tool/gen_legacy_fixture.mjs > packages/pe_domain/test/fixtures/legacy_reference.json
 node tool/gen_category_fixture.mjs > packages/pe_domain/test/fixtures/category_reference.json
 node tool/gen_routing_fixture.mjs > packages/pe_data/test/fixtures/routing_reference.json
+node tool/gen_places_fixture.mjs > packages/pe_domain/test/fixtures/places_reference.json
 ```
+
+**Trail grading is not fixture-driven.** `GRADERS` is module-private in
+`src/trails.ts` and only reachable through a `Cesium.Viewer`, so unlike the
+tables above there is no honest way to execute the original headlessly. Those
+tests are table-driven from the source as written, which is weaker — stated
+plainly rather than implied to be equivalent.
 
 ### Legacy bugs fixed during the port
 
@@ -120,6 +131,24 @@ Each is covered by a test that names the old behaviour:
 - **Current swell fell back to nothing,** rendering `NaN ft` at spots whose
   marine model omits the swell fields; it now falls back to the wave figures
   exactly as the hourly values already did.
+- **Recents deduped on exact floating-point coordinate equality.** Photon does
+  not return bit-identical coordinates for the same POI across searches, so
+  revisiting a place stacked a duplicate row; with only eight slots, three
+  visits to one restaurant evicted five genuinely different places. Now keyed
+  on OSM identity, with a rounded-coordinate fallback.
+- **Stored JSON was trusted.** The waypoint and recents loaders checked only
+  that the outer value was an array, so one truncated entry became a row with
+  no coordinate that broke rendering for everything after it. Entries are now
+  validated individually and bad ones dropped.
+- **Track distance counted GPS jitter.** A parked phone emits fixes wandering
+  a few metres and the original summed every one, so leaving a recording
+  running steadily inflated the total. `TrackRecorder` ignores movement under
+  5 m.
+
+Two findings recorded rather than "fixed", because measurement showed they
+were latent: the download planner's 500-tile cap is never reached (three zoom
+levels top out near 340 tiles), and the trail query's 0.25° span clamp is
+unreachable because the 22 km altitude cutoff binds first at 0.178°.
 
 ## Not yet built
 

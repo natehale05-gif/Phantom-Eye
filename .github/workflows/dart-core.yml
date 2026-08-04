@@ -73,6 +73,8 @@ jobs:
             > packages/pe_domain/test/fixtures/category_reference.json
           node tool/gen_routing_fixture.mjs \
             > packages/pe_data/test/fixtures/routing_reference.json
+          node tool/gen_places_fixture.mjs \
+            > packages/pe_domain/test/fixtures/places_reference.json
 
       - name: Test pe_core
         run: dart test
